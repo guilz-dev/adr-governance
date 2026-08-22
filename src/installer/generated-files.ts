@@ -14,7 +14,7 @@ export type Manifest = {
   files: Record<string, string>
 }
 
-export const GENERATOR_VERSION = '0.1.6'
+export const GENERATOR_VERSION = '0.1.7'
 
 export async function hashFile(absPath: string): Promise<string> {
   const content = await readFile(absPath, 'utf8')
