@@ -122,40 +122,14 @@ export function hashPrompt(prompt: string): string {
   return sha256(prompt)
 }
 
-export function buildFingerprint(
-  paths: string[],
-  gitStatusHash: string,
-  contentHashes: Record<string, string>,
-): RepositoryFingerprint {
-  return {
-    paths: [...paths].sort(),
-    gitStatusHash,
-    contentHashes,
-  }
-}
-
-export function fingerprintChanged(
-  before: RepositoryFingerprint,
-  after: RepositoryFingerprint,
-): boolean {
-  if (before.gitStatusHash !== after.gitStatusHash) return true
-  const allPaths = new Set([...before.paths, ...after.paths])
-  for (const p of allPaths) {
-    if (before.contentHashes[p] !== after.contentHashes[p]) return true
-  }
-  return false
-}
-
 export function watchPathsChanged(
   before: RepositoryFingerprint,
   after: RepositoryFingerprint,
 ): boolean {
-  const changed = new Set<string>()
   const allPaths = new Set([...before.paths, ...after.paths])
   for (const p of allPaths) {
-    if (before.contentHashes[p] !== after.contentHashes[p]) {
-      changed.add(p)
-    }
+    if (!isWatchPath(p)) continue
+    if (before.contentHashes[p] !== after.contentHashes[p]) return true
   }
-  return [...changed].some(isWatchPath)
+  return false
 }

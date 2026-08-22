@@ -158,26 +158,49 @@ async function checkBaseRefDuplicates(
   const exec = promisify(execFile)
   const issues: ValidationIssue[] = []
 
+  const byNumber = new Map<number, ParsedAdr[]>()
+  for (const adr of currentAdrs) {
+    const group = byNumber.get(adr.number) ?? []
+    group.push(adr)
+    byNumber.set(adr.number, group)
+  }
+  for (const [number, group] of byNumber) {
+    if (group.length > 1) {
+      issues.push({
+        severity: 'error',
+        code: 'duplicate-number',
+        message: `Duplicate ADR number ${number} in current tree: ${group.map((a) => a.path).join(', ')}`,
+      })
+    }
+  }
+
   try {
     const { stdout } = await exec('git', ['ls-tree', '-r', '--name-only', baseRef], {
       cwd: repoRoot,
     })
-    const baseFiles = stdout.split('\n').filter((f) => /\d{4}-.+\.md$/.test(f))
-    const currentNumbers = new Set(currentAdrs.map((a) => a.number))
-
-    for (const file of baseFiles) {
+    const baseByNumber = new Map<number, string[]>()
+    for (const file of stdout.split('\n').filter((f) => /\d{4}-.+\.md$/.test(f))) {
       const match = /(\d{4})-/.exec(file)
       if (!match) continue
       const num = Number.parseInt(match[1] ?? '0', 10)
-      const sameNumberCurrent = currentAdrs.filter((a) => a.number === num)
-      if (sameNumberCurrent.length > 1) {
+      const list = baseByNumber.get(num) ?? []
+      list.push(file)
+      baseByNumber.set(num, list)
+    }
+
+    for (const [num, baseFiles] of baseByNumber) {
+      const current = byNumber.get(num) ?? []
+      if (current.length === 0) continue
+      const baseNames = new Set(baseFiles.map((f) => f.split('/').pop()))
+      const currentNames = new Set(current.map((a) => a.path.split('/').pop()))
+      const overlap = [...baseNames].some((n) => currentNames.has(n))
+      if (!overlap && current.length > 0) {
         issues.push({
           severity: 'error',
-          code: 'base-ref-duplicate',
-          message: `Number ${num} duplicated across branches`,
+          code: 'base-ref-number-collision',
+          message: `ADR number ${num} reused with different slug between ${baseRef} and current branch`,
         })
       }
-      void currentNumbers
     }
   } catch {
     issues.push({

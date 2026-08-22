@@ -95,16 +95,9 @@ export async function loadInitPlan(planPath: string): Promise<InitPlan> {
   return JSON.parse(raw) as InitPlan
 }
 
-export function validateInitPlan(plan: InitPlan, repoRoot: string): string[] {
+export function validateInitPlan(plan: InitPlan): string[] {
   const errors: string[] = []
   for (const op of plan.operations) {
-    if (op.path.startsWith('/') || op.path.includes('..')) {
-      errors.push(`Invalid plan path: ${op.path}`)
-    }
-    const resolved = path.resolve(repoRoot, op.path)
-    if (!resolved.startsWith(path.resolve(repoRoot))) {
-      errors.push(`Path escapes repo root: ${op.path}`)
-    }
     if (op.kind === 'create' && op.content.length === 0) {
       errors.push(`Empty content for create: ${op.path}`)
     }
@@ -117,7 +110,7 @@ export async function applyInitPlan(
   plan: InitPlan,
   applyGenerated: (repoRoot: string, plan: InitPlan) => Promise<void>,
 ): Promise<void> {
-  const errors = [...validateInitPlan(plan, repoRoot), ...(await validatePlanPaths(repoRoot, plan))]
+  const errors = [...validateInitPlan(plan), ...(await validatePlanPaths(repoRoot, plan))]
   if (errors.length > 0) {
     throw new Error(errors.join('\n'))
   }

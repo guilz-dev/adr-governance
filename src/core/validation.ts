@@ -95,7 +95,6 @@ export function validateAdrFile(
     })
   }
 
-  void formatAdrId(parsedName.number, config.documents.idDigits)
   return issues
 }
 
