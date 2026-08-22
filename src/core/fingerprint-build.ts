@@ -18,18 +18,16 @@ export async function buildRepositoryFingerprint(
   const selected = truncated ? watchPaths.slice(0, MAX_FINGERPRINT_FILES) : watchPaths
   const contentHashes: Record<string, string> = {}
 
-  if (!truncated) {
-    for (const rel of selected) {
-      const abs = path.join(repoRoot, rel)
-      if (!existsSync(abs)) continue
-      try {
-        const s = await stat(abs)
-        if (!s.isFile()) continue
-        const content = await readFile(abs, 'utf8')
-        contentHashes[rel] = sha256(content)
-      } catch {
-        continue
-      }
+  for (const rel of selected) {
+    const abs = path.join(repoRoot, rel)
+    if (!existsSync(abs)) continue
+    try {
+      const s = await stat(abs)
+      if (!s.isFile()) continue
+      const content = await readFile(abs, 'utf8')
+      contentHashes[rel] = sha256(content)
+    } catch {
+      continue
     }
   }
 

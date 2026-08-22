@@ -2,8 +2,11 @@ import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 
+import { detectCiProvider } from '../../analysis/init-hints.js'
 import { copySkillAndBundles } from '../../installer/generated-files.js'
+import { buildInitPlanOperations } from '../../installer/init-plan-builder.js'
 import type { InitPlan } from '../../core/types.js'
+import { gitLsFiles } from '../git.js'
 
 export async function runSync(options: {
   packageRoot: string
@@ -28,5 +31,17 @@ export async function runSync(options: {
     }
   }
 
-  await copySkillAndBundles(options.packageRoot, options.repoRoot, options.plan)
+  const tracked = await gitLsFiles(options.repoRoot)
+  const operations = await buildInitPlanOperations(
+    options.packageRoot,
+    options.repoRoot,
+    options.plan.proposedConfig,
+    detectCiProvider(tracked),
+  )
+
+  await copySkillAndBundles(options.packageRoot, options.repoRoot, {
+    ...options.plan,
+    operations,
+    postApplySteps: options.plan.postApplySteps ?? ['write-manifest'],
+  })
 }

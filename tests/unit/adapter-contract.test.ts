@@ -16,27 +16,30 @@ describe('adapter contract', () => {
   const config = defaultConfig()
   const ctx = buildHookContext(config, 'likely', ['term:architecture'], ['docs/adr/0001-x.md'])
 
-  it('claude before-turn includes additionalContext on elevated risk', () => {
+  it('claude before-turn uses hookSpecificOutput.additionalContext', () => {
     const out = toClaudeUserPromptSubmit(ctx)
-    expect(out.continue).toBe(true)
-    expect(out.additionalContext).toContain('managing-adrs')
+    const specific = out.hookSpecificOutput as { hookEventName?: string; additionalContext?: string }
+    expect(specific.hookEventName).toBe('UserPromptSubmit')
+    expect(specific.additionalContext).toContain('managing-adrs')
   })
 
-  it('claude stop emits continuation on follow-up', () => {
+  it('claude stop blocks with decision block and reason', () => {
     const out = toClaudeStop('audit follow-up')
-    expect(out.continue).toBe(false)
-    expect(out.stopReason).toContain('audit')
+    expect(out.decision).toBe('block')
+    expect(out.reason).toContain('audit')
   })
 
-  it('gemini before-agent allows with context', () => {
+  it('gemini before-agent uses hookSpecificOutput.additionalContext', () => {
     const out = toGeminiBeforeAgent(ctx)
     expect(out.decision).toBe('allow')
-    expect(out.additionalContext).toBeTruthy()
+    const specific = out.hookSpecificOutput as { additionalContext?: string }
+    expect(specific.additionalContext).toBeTruthy()
   })
 
   it('gemini after-agent denies once for follow-up', () => {
     const out = toGeminiAfterAgent('audit follow-up')
     expect(out.decision).toBe('deny')
+    expect(out.reason).toContain('audit')
   })
 
   it('cursor session-start includes standing reminder', () => {

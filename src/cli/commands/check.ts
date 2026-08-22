@@ -10,7 +10,7 @@ import { loadAllAdrs, MANIFEST_PATH } from '../../core/repository-state.js'
 import { sha256 } from '../../core/numbering.js'
 import type { ParsedAdr } from '../../core/types.js'
 import type { ValidationIssue } from '../../core/validation.js'
-import { verifyCursorHookEntries } from '../../installer/hook-merge.js'
+import { verifyAllRuntimeHookEntries } from '../../installer/hook-merge.js'
 import { validateContextLinks } from '../../core/context-links.js'
 
 export type CheckResult = {
@@ -105,7 +105,7 @@ export async function runCheck(repoRoot: string, baseRef?: string): Promise<Chec
     issues.push(...baseIssues)
   }
 
-  for (const message of await verifyCursorHookEntries(repoRoot)) {
+  for (const message of await verifyAllRuntimeHookEntries(repoRoot)) {
     if (existsSync(manifestPath)) {
       issues.push({
         severity: 'error',

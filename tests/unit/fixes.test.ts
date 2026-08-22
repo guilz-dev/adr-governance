@@ -7,7 +7,12 @@ import path from 'node:path'
 
 import { defaultConfig } from '../../src/core/config.js'
 import { parseAdrFromPath } from '../../src/core/validation.js'
-import { mergeCursorHooks } from '../../src/installer/hook-merge.js'
+import { mergeCursorHooks, mergeClaudeHooks } from '../../src/installer/hook-merge.js'
+import { mergeNestedHookGroups } from '../../src/installer/nested-hook-merge.js'
+import { MANAGED_MARKER } from '../../src/installer/hook-merge-types.js'
+import { turnPointerRelPath } from '../../src/hooks/turn-pointer.js'
+import { runCreate } from '../../src/cli/commands/create.js'
+import { buildRepositoryFingerprint } from '../../src/core/fingerprint.js'
 import { fingerprintWatchPathsChanged } from '../../src/core/fingerprint.js'
 import { watchPathsChanged } from '../../src/core/risk-signals.js'
 import type { RepositoryFingerprint } from '../../src/core/types.js'
@@ -39,6 +44,101 @@ describe('legacy ADR parsing', () => {
     expect(parsed?.legacy).toBe(true)
     expect(parsed?.frontmatter.status).toBe('accepted')
     expect(parsed?.title).toContain('Facet naming')
+  })
+})
+
+describe('nested hook merge', () => {
+  it('preserves matcher wrapper when merging managed hooks', () => {
+    const existing = [
+      {
+        matcher: 'Write|Edit',
+        hooks: [{ type: 'command', command: 'echo keep' }],
+      },
+    ]
+    const managed = [{ type: 'command', command: 'node .claude/hooks/adr-governance.mjs before-turn' }]
+    const { merged } = mergeNestedHookGroups(existing, managed, MANAGED_MARKER)
+    expect(merged).toHaveLength(2)
+    expect((merged[0] as { matcher?: string }).matcher).toBe('Write|Edit')
+  })
+
+  it('merges claude settings without flattening matcher groups', async () => {
+    const repo = await mkdtemp(path.join(tmpdir(), 'adr-claude-hook-'))
+    await mkdir(path.join(repo, '.claude'), { recursive: true })
+    await writeFile(
+      path.join(repo, '.claude/settings.json'),
+      JSON.stringify(
+        {
+          hooks: {
+            UserPromptSubmit: [
+              {
+                matcher: 'deploy',
+                hooks: [{ type: 'command', command: 'echo scoped' }],
+              },
+            ],
+          },
+        },
+        null,
+        2,
+      ),
+    )
+
+    const result = await mergeClaudeHooks(repo)
+    expect(result.conflict).toBeUndefined()
+    const merged = JSON.parse(await readFile(path.join(repo, '.claude/settings.json'), 'utf8')) as {
+      hooks: { UserPromptSubmit: Array<{ matcher?: string }> }
+    }
+    expect(merged.hooks.UserPromptSubmit.some((g) => g.matcher === 'deploy')).toBe(true)
+  })
+  it('upgrades flat managed hook entry without duplicating managed groups', () => {
+    const existing = [
+      {
+        type: 'command',
+        command: 'node .claude/hooks/adr-governance.mjs before-turn',
+      },
+    ]
+    const managed = [{ type: 'command', command: 'node .claude/hooks/adr-governance.mjs after-turn' }]
+    const { merged, conflict } = mergeNestedHookGroups(existing, managed, MANAGED_MARKER)
+    expect(conflict).toBeUndefined()
+    expect(merged).toHaveLength(1)
+    expect((merged[0] as { hooks: unknown[] }).hooks).toHaveLength(2)
+  })
+})
+
+describe('create human acceptance guard', () => {
+  it('rejects create --status accepted when requireHumanAcceptance is true', async () => {
+    const repo = await mkdtemp(path.join(tmpdir(), 'adr-create-guard-'))
+    await mkdir(path.join(repo, 'docs/adr'), { recursive: true })
+    await mkdir(path.join(repo, 'docs/proposed-adr'), { recursive: true })
+    await mkdir(path.join(repo, '.adr-governance/state/locks'), { recursive: true })
+
+    const config = defaultConfig({ promotion: { requireHumanAcceptance: true } })
+    await writeFile(path.join(repo, 'adr.config.json'), JSON.stringify(config, null, 2))
+
+    await expect(
+      runCreate({
+        repoRoot: repo,
+        config,
+        status: 'accepted',
+        title: 'Test',
+        body: '# Test\n\nBody',
+      }),
+    ).rejects.toThrow(/requireHumanAcceptance/)
+  })
+})
+
+describe('fingerprint truncation', () => {
+  it('still hashes sampled watch paths when file count exceeds cap', async () => {
+    const repo = await mkdtemp(path.join(tmpdir(), 'adr-fingerprint-'))
+    const paths = Array.from({ length: 510 }, (_, i) => `packages/db/src/mod-${i}/schema.ts`)
+    for (const rel of paths) {
+      const abs = path.join(repo, rel)
+      await mkdir(path.dirname(abs), { recursive: true })
+      await writeFile(abs, `export const v${rel} = 1\n`)
+    }
+
+    const fp = await buildRepositoryFingerprint(repo, paths)
+    expect(fp.paths.length).toBeGreaterThan(500)
+    expect(Object.keys(fp.contentHashes).length).toBeGreaterThan(0)
   })
 })
 
@@ -171,14 +271,20 @@ describe('turn-close pointer', () => {
 
     const turnRel = `.adr-governance/state/turns/${turnId}.json`
     await writeFile(path.join(repo, turnRel), JSON.stringify(turnState, null, 2))
+    await mkdir(path.join(repo, '.adr-governance/state/current-turn'), { recursive: true })
     await writeFile(
-      path.join(repo, '.adr-governance/state/current-turn.json'),
+      path.join(repo, turnPointerRelPath('session-1')),
       JSON.stringify({ turnId, turnStatePath: turnRel }, null, 2),
     )
 
-    await runTurnClose({ repoRoot: repo, outcome: 'no-change', reason: 'no-decision' })
+    await runTurnClose({
+      repoRoot: repo,
+      outcome: 'no-change',
+      reason: 'no-decision',
+      sessionId: 'session-1',
+    })
 
-    const updated = await loadCurrentTurnState(repo)
+    const updated = await loadCurrentTurnState(repo, 'session-1')
     expect(updated?.receipt?.outcome).toBe('no-change')
     expect(updated?.receipt?.reason).toBe('no-decision')
   })
@@ -234,11 +340,18 @@ describe('cursor hook wrapper stdin', () => {
       await readFile(wrapperSrc, 'utf8'),
     )
 
+    const hookPayload = {
+      prompt: 'We need a new database migration for auth architecture',
+      cwd: repo,
+      conversation_id: 'conv-hook-test',
+      generation_id: 'gen-hook-test',
+    }
+
     const stdout = await new Promise<string>((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout> | undefined
       const child = spawn(
         process.execPath,
-        [path.join(repo, '.cursor/hooks/adr-governance.mjs'), 'session-start'],
+        [path.join(repo, '.cursor/hooks/adr-governance.mjs'), 'before-turn'],
         { cwd: repo, stdio: ['pipe', 'pipe', 'pipe'] },
       )
       const chunks: Buffer[] = []
@@ -251,20 +364,15 @@ describe('cursor hook wrapper stdin', () => {
         if (code === 0) resolve(text)
         else reject(new Error(`hook wrapper exited ${code}: ${text}`))
       })
-      child.stdin.end(
-        JSON.stringify({
-          prompt: 'We need a new database migration for auth architecture',
-          cwd: repo,
-        }),
-      )
+      child.stdin.end(JSON.stringify(hookPayload))
       timer = setTimeout(() => {
         child.kill('SIGKILL')
         reject(new Error('hook wrapper timed out'))
       }, 8000)
     })
 
-    const parsed = JSON.parse(stdout) as { additional_context?: string }
-    expect(parsed.additional_context).toContain('ADR governance')
+    const parsed = JSON.parse(stdout) as { continue?: boolean }
+    expect(parsed.continue).toBe(true)
 
     const after = await new Promise<string>((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout> | undefined
@@ -282,7 +390,13 @@ describe('cursor hook wrapper stdin', () => {
         if (code === 0) resolve(text)
         else reject(new Error(`after-turn exited ${code}: ${text}`))
       })
-      child.stdin.end(JSON.stringify({ cwd: repo }))
+      child.stdin.end(
+        JSON.stringify({
+          cwd: repo,
+          conversation_id: hookPayload.conversation_id,
+          generation_id: hookPayload.generation_id,
+        }),
+      )
       timer = setTimeout(() => {
         child.kill('SIGKILL')
         reject(new Error('after-turn timed out'))

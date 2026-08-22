@@ -14,6 +14,7 @@ import { gitLsFiles } from '../cli/git.js'
 
 export type AfterTurnInput = {
   cwd: string
+  sessionId?: string
 }
 
 export type AfterTurnResult = {
@@ -40,7 +41,7 @@ export async function runAfterTurn(input: AfterTurnInput): Promise<AfterTurnResu
     return { allowFinish: true }
   }
 
-  const state = await loadCurrentTurnState(repoRoot)
+  const state = await loadCurrentTurnState(repoRoot, input.sessionId)
   if (!state) return { allowFinish: true }
 
   const docPaths = [

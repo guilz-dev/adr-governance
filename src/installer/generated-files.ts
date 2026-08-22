@@ -6,7 +6,6 @@ import { createHash } from 'node:crypto'
 import type { InitPlan } from '../core/types.js'
 import { atomicWriteFile } from '../core/locks.js'
 import { sha256 } from '../core/numbering.js'
-import { mergeAllRuntimeHooks } from './hook-merge.js'
 import { applyPlanOperations } from './apply-plan.js'
 
 export type Manifest = {
@@ -15,7 +14,7 @@ export type Manifest = {
   files: Record<string, string>
 }
 
-export const GENERATOR_VERSION = '0.1.2'
+export const GENERATOR_VERSION = '0.1.6'
 
 export async function hashFile(absPath: string): Promise<string> {
   const content = await readFile(absPath, 'utf8')
@@ -33,8 +32,11 @@ export async function buildManifest(repoRoot: string, packageRoot: string): Prom
     '.cursor/hooks.json',
     '.claude/commands/adr.md',
     '.claude/hooks/adr-governance.mjs',
+    '.claude/settings.json',
     '.codex/hooks/adr-governance.mjs',
+    '.codex/hooks.json',
     '.gemini/hooks/adr-governance.mjs',
+    '.gemini/settings.json',
     'adr.config.json',
     'docs/adr/README.md',
   ]
@@ -71,39 +73,6 @@ export async function copySkillAndBundles(
   repoRoot: string,
   plan: InitPlan,
 ): Promise<void> {
-  const configContent = JSON.stringify(plan.proposedConfig, null, 2) + '\n'
-  await atomicWriteFile(path.join(repoRoot, 'adr.config.json'), configContent)
-
-  const skillSrc = path.join(packageRoot, 'skill/managing-adrs')
-  const skillDest = path.join(repoRoot, '.agents/skills/managing-adrs')
-  await copyDir(skillSrc, skillDest)
-
-  const cliBundle = path.join(packageRoot, 'dist/bundle/cli.mjs')
-  const hookBundle = path.join(packageRoot, 'dist/bundle/hook.mjs')
-  await mkdirSafe(path.join(repoRoot, '.adr-governance/bin'))
-  await copyFile(cliBundle, path.join(repoRoot, '.adr-governance/bin/cli.mjs'))
-  await copyFile(hookBundle, path.join(repoRoot, '.adr-governance/bin/hook.mjs'))
-
-  const schemaSrc = path.join(packageRoot, 'templates/schema')
-  await copyDir(schemaSrc, path.join(repoRoot, '.adr-governance/schema'))
-
-  const templates: Array<[string, string]> = [
-    ['templates/docs/adr/README.md', 'docs/adr/README.md'],
-    ['templates/cursor/rules/adr-governance.mdc', '.cursor/rules/adr-governance.mdc'],
-    ['templates/cursor/hooks/adr-governance.mjs', '.cursor/hooks/adr-governance.mjs'],
-    ['templates/claude/commands/adr.md', '.claude/commands/adr.md'],
-    ['templates/claude/hooks/adr-governance.mjs', '.claude/hooks/adr-governance.mjs'],
-    ['templates/codex/hooks/adr-governance.mjs', '.codex/hooks/adr-governance.mjs'],
-    ['templates/gemini/hooks/adr-governance.mjs', '.gemini/hooks/adr-governance.mjs'],
-    ['templates/adr-governance/gitignore', '.adr-governance/.gitignore'],
-  ]
-
-  for (const [src, dest] of templates) {
-    const srcPath = path.join(packageRoot, src)
-    const destPath = path.join(repoRoot, dest)
-    await copyFile(srcPath, destPath)
-  }
-
   const filteredOperations = plan.operations.filter((op) => {
     if (op.kind !== 'create') return true
     return !existsSync(path.join(repoRoot, op.path))
@@ -111,44 +80,14 @@ export async function copySkillAndBundles(
 
   await applyPlanOperations(repoRoot, filteredOperations)
 
-  const hookResults = await mergeAllRuntimeHooks(repoRoot)
-  const conflicts = hookResults.filter((r) => r.conflict)
-  if (conflicts.length > 0) {
-    throw new Error(conflicts.map((c) => `${c.path}: ${c.conflict}`).join('\n'))
+  const postApplySteps = plan.postApplySteps ?? ['write-manifest']
+  if (postApplySteps.includes('write-manifest')) {
+    const manifest = await buildManifest(repoRoot, packageRoot)
+    await atomicWriteFile(
+      path.join(repoRoot, '.adr-governance/manifest.json'),
+      JSON.stringify(manifest, null, 2) + '\n',
+    )
   }
-
-  const manifest = await buildManifest(repoRoot, packageRoot)
-  await atomicWriteFile(
-    path.join(repoRoot, '.adr-governance/manifest.json'),
-    JSON.stringify(manifest, null, 2) + '\n',
-  )
-}
-
-async function copyDir(src: string, dest: string): Promise<void> {
-  if (!existsSync(src)) return
-  await mkdirSafe(dest)
-  const entries = await readdir(src, { withFileTypes: true })
-  for (const entry of entries) {
-    const s = path.join(src, entry.name)
-    const d = path.join(dest, entry.name)
-    if (entry.isDirectory()) {
-      await copyDir(s, d)
-    } else {
-      await copyFile(s, d)
-    }
-  }
-}
-
-async function copyFile(src: string, dest: string): Promise<void> {
-  if (!existsSync(src)) return
-  await mkdirSafe(path.dirname(dest))
-  const content = await readFile(src, 'utf8')
-  await atomicWriteFile(dest, content)
-}
-
-async function mkdirSafe(dir: string): Promise<void> {
-  const { mkdir } = await import('node:fs/promises')
-  await mkdir(dir, { recursive: true })
 }
 
 export function planRootHash(repoRoot: string): string {

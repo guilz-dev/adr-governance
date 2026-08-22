@@ -5,6 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2026-08-22
+
+### Fixed
+
+- Hook merge: preserve Claude/Codex/Gemini nested `matcher` groups instead of flattening
+- Turn pointers: scope by `generation_id` / `conversation_id`; no cross-session fallback when id is explicit
+- Lock cleanup: remove stale locks only when PID is dead **and** age exceeds threshold
+- `create`: block `--status accepted` when `promotion.requireHumanAcceptance` is true
+- Claude/Gemini adapters: emit official hook output shapes (`hookSpecificOutput`, `decision: block`)
+- `check`: verify hook registration for Cursor, Claude, Codex, and Gemini
+- Init apply: list all planned file operations in `init-plan.json` with hash checks (including runtime hook configs)
+- Init apply: declare `postApplySteps: ["write-manifest"]` in the plan
+- Init apply: generate `CONTEXT.md`, `CONTEXT-MAP.md`, and `docs/proposed-adr/README.md` stubs
+- Apply plan: reject symlink segments in parent directories of target paths
+- Fingerprint: hash sampled watch paths even when watch file count exceeds cap
+
 ## [0.1.5] - 2026-08-22
 
 ### Fixed

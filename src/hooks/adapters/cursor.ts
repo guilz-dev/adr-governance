@@ -29,46 +29,39 @@ export function toCursorStop(followUpMessage?: string): CursorStopOutput {
   return { followup_message: followUpMessage }
 }
 
-export function toClaudeUserPromptSubmit(ctx: HookContext | undefined): {
-  continue: boolean
-  additionalContext?: string
-} {
-  if (!ctx) return { continue: true }
+export function toClaudeUserPromptSubmit(ctx: HookContext | undefined): Record<string, unknown> {
+  if (!ctx?.fullInstruction) return {}
   return {
-    continue: true,
-    additionalContext: ctx.fullInstruction,
+    hookSpecificOutput: {
+      hookEventName: 'UserPromptSubmit',
+      additionalContext: ctx.fullInstruction,
+    },
   }
 }
 
-export function toClaudeStop(followUpMessage?: string): {
-  continue: boolean
-  stopReason?: string
-} {
-  if (!followUpMessage) return { continue: true }
-  return { continue: false, stopReason: followUpMessage }
+export function toClaudeStop(followUpMessage?: string): Record<string, unknown> {
+  if (!followUpMessage) return {}
+  return {
+    decision: 'block',
+    reason: followUpMessage,
+  }
 }
 
-export function toCodexUserPromptSubmit(ctx: HookContext | undefined): {
-  continue: boolean
-  additionalContext?: string
-} {
+export function toCodexUserPromptSubmit(ctx: HookContext | undefined): Record<string, unknown> {
   return toClaudeUserPromptSubmit(ctx)
 }
 
-export function toGeminiBeforeAgent(ctx: HookContext | undefined): {
-  decision: 'allow'
-  additionalContext?: string
-} {
+export function toGeminiBeforeAgent(ctx: HookContext | undefined): Record<string, unknown> {
+  if (!ctx?.fullInstruction) return { decision: 'allow' }
   return {
     decision: 'allow',
-    additionalContext: ctx?.fullInstruction,
+    hookSpecificOutput: {
+      additionalContext: ctx.fullInstruction,
+    },
   }
 }
 
-export function toGeminiAfterAgent(followUpMessage?: string): {
-  decision: 'allow' | 'deny'
-  reason?: string
-} {
+export function toGeminiAfterAgent(followUpMessage?: string): Record<string, unknown> {
   if (!followUpMessage) return { decision: 'allow' }
   return { decision: 'deny', reason: followUpMessage }
 }

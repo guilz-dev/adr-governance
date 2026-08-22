@@ -8,7 +8,25 @@ import { atomicWriteFile } from '../core/locks.js'
 import { mergeJsoncEdits } from './merge-jsonc.js'
 import { isPathInsideRepo } from '../core/repository-state.js'
 
+async function assertNoSymlinkInPath(repoRoot: string, relPath: string): Promise<void> {
+  const abs = path.resolve(repoRoot, relPath)
+  const root = path.resolve(repoRoot)
+  let current = path.dirname(abs)
+
+  while (current.startsWith(root)) {
+    if (existsSync(current)) {
+      const stat = await lstat(current)
+      if (stat.isSymbolicLink()) {
+        throw new Error(`Symlink in path not allowed: ${path.relative(root, current) || '.'}`)
+      }
+    }
+    if (current === root) break
+    current = path.dirname(current)
+  }
+}
+
 export async function hashFileAt(repoRoot: string, relPath: string): Promise<string | null> {
+  await assertNoSymlinkInPath(repoRoot, relPath)
   const abs = path.join(repoRoot, relPath)
   if (!existsSync(abs)) return null
   const stat = await lstat(abs)
@@ -27,6 +45,11 @@ export async function validatePlanPaths(repoRoot: string, plan: InitPlan): Promi
     if (op.path.startsWith('/') || op.path.includes('..')) {
       errors.push(`Invalid plan path: ${op.path}`)
     }
+    try {
+      await assertNoSymlinkInPath(repoRoot, op.path)
+    } catch (e) {
+      errors.push(String(e))
+    }
     const abs = path.join(repoRoot, op.path)
     if (existsSync(abs)) {
       const stat = await lstat(abs)
@@ -43,6 +66,8 @@ export async function applyPlanOperations(
   operations: InitPlanOperation[],
 ): Promise<void> {
   for (const op of operations) {
+    await assertNoSymlinkInPath(repoRoot, op.path)
+
     if (op.kind === 'create') {
       await assertHashIfExpected(repoRoot, op.path, null)
       await atomicWriteFile(path.join(repoRoot, op.path), op.content)

@@ -17,8 +17,10 @@ describe('integration init apply', () => {
     execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: repo })
 
     const outDir = defaultInitOutputDir(repo)
-    const scan = await runInitScan(repo, outDir)
+    const scan = await runInitScan(repo, outDir, PACKAGE_ROOT)
     expect(scan.plan.detectedLayout).toBe('none')
+    expect(scan.plan.operations.some((op) => op.path === '.cursor/hooks.json')).toBe(true)
+    expect(scan.plan.postApplySteps).toContain('write-manifest')
 
     await applyInitPlan(repo, scan.plan, async (root, plan) => {
       await copySkillAndBundles(PACKAGE_ROOT, root, plan)
@@ -47,7 +49,7 @@ describe('integration init apply', () => {
     execFileSync('git', ['add', '.'], { cwd: repo })
     execFileSync('git', ['commit', '-m', 'add legacy adr'], { cwd: repo })
 
-    const scan = await runInitScan(repo, defaultInitOutputDir(repo))
+    const scan = await runInitScan(repo, defaultInitOutputDir(repo), PACKAGE_ROOT)
     expect(scan.plan.proposedConfig.documents.legacyFrontmatter).toBe(true)
   })
 })
@@ -57,7 +59,7 @@ describe('init plan loader', () => {
     const repo = await mkdtemp(path.join(tmpdir(), 'adr-plan-load-'))
     execFileSync('git', ['init', '-b', 'main'], { cwd: repo })
     execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: repo })
-    const scan = await runInitScan(repo, defaultInitOutputDir(repo))
+    const scan = await runInitScan(repo, defaultInitOutputDir(repo), PACKAGE_ROOT)
     const loaded = await loadInitPlan(scan.planPath)
     expect(loaded.planId).toBe(scan.plan.planId)
   })

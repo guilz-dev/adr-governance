@@ -41,6 +41,12 @@ export async function runCreate(options: {
         ? options.config.layout.acceptedDir
         : options.config.layout.proposedDir
 
+    if (options.status === 'accepted' && options.config.promotion.requireHumanAcceptance) {
+      throw new Error(
+        'Cannot create accepted ADR when promotion.requireHumanAcceptance is true. Create as proposed and promote with --approval human.',
+      )
+    }
+
     if (options.status === 'accepted' && options.body.match(/^##\s+Open Points/im)) {
       throw new Error('Accepted ADR cannot contain Open Points')
     }
@@ -50,7 +56,10 @@ export async function runCreate(options: {
       {
         status: options.status,
         date: today,
-        acceptance: options.status === 'accepted' ? 'automatic' : undefined,
+        acceptance:
+          options.status === 'accepted' && !options.config.promotion.requireHumanAcceptance
+            ? 'automatic'
+            : undefined,
       },
       options.title,
       options.body,

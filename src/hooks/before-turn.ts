@@ -1,6 +1,8 @@
-import { mkdir, readFile, writeFile, stat } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
+
+import { resolveHookTurnKey } from './resolve-hook-session-id.js'
 
 import { parseConfig } from '../core/config.js'
 import { hashPrompt, assessPromptRisk, rankRelevantAdrs } from '../core/risk-signals.js'
@@ -14,13 +16,13 @@ import { buildHookContext } from './common.js'
 import type { TurnState } from '../core/types.js'
 import { buildRepositoryFingerprint } from '../core/fingerprint.js'
 import { gitLsFiles } from '../cli/git.js'
-
-export const CURRENT_TURN_POINTER = '.adr-governance/state/current-turn.json'
+import { loadTurnStateForSession, writeTurnPointer } from './turn-pointer.js'
 
 export type BeforeTurnInput = {
   cwd: string
   prompt: string
   sessionId?: string
+  hookPayload?: Record<string, unknown>
 }
 
 export type BeforeTurnResult = {
@@ -28,6 +30,7 @@ export type BeforeTurnResult = {
   warning?: string
   hookContext?: ReturnType<typeof buildHookContext>
   turnStatePath?: string
+  sessionId?: string
 }
 
 export async function runBeforeTurn(input: BeforeTurnInput): Promise<BeforeTurnResult> {
@@ -64,7 +67,9 @@ export async function runBeforeTurn(input: BeforeTurnInput): Promise<BeforeTurnR
   await mkdir(stateDir, { recursive: true })
 
   const turnId = randomUUID()
-  const sessionId = input.sessionId ?? randomUUID()
+  const sessionId =
+    input.sessionId?.trim() ||
+    (input.hookPayload ? resolveHookTurnKey(input.hookPayload) : randomUUID())
 
   const turnState: TurnState = {
     schemaVersion: 1,
@@ -83,60 +88,27 @@ export async function runBeforeTurn(input: BeforeTurnInput): Promise<BeforeTurnR
   const turnStatePath = path.join(stateDir, `${turnId}.json`)
   await writeFile(turnStatePath, JSON.stringify(turnState, null, 2))
 
-  const pointerPath = path.join(repoRoot, CURRENT_TURN_POINTER)
-  await mkdir(path.dirname(pointerPath), { recursive: true })
-  await writeFile(
-    pointerPath,
-    JSON.stringify(
-      {
-        turnId,
-        turnStatePath: path.relative(repoRoot, turnStatePath),
-        risk,
-        fullInstruction: hookContext.fullInstruction,
-        updatedAt: turnState.createdAt,
-      },
-      null,
-      2,
-    ),
-  )
+  await writeTurnPointer(repoRoot, sessionId, {
+    turnId,
+    turnStatePath: path.relative(repoRoot, turnStatePath),
+    risk,
+    fullInstruction: hookContext.fullInstruction,
+    updatedAt: turnState.createdAt,
+  })
 
-  return { ok: true, hookContext, turnStatePath }
+  return { ok: true, hookContext, turnStatePath, sessionId }
 }
 
-export async function loadCurrentTurnState(repoRoot: string): Promise<TurnState | null> {
-  const pointerPath = path.join(repoRoot, CURRENT_TURN_POINTER)
-  try {
-    const pointer = JSON.parse(await readFile(pointerPath, 'utf8')) as {
-      turnStatePath?: string
-    }
-    if (!pointer.turnStatePath) return null
-    const statePath = path.join(repoRoot, pointer.turnStatePath)
-    return JSON.parse(await readFile(statePath, 'utf8')) as TurnState
-  } catch {
-    return loadLatestTurnStateByMtime(repoRoot)
-  }
+export async function loadCurrentTurnState(
+  repoRoot: string,
+  sessionId?: string,
+): Promise<TurnState | null> {
+  return loadTurnStateForSession(repoRoot, sessionId)
 }
 
-async function loadLatestTurnStateByMtime(repoRoot: string): Promise<TurnState | null> {
-  const stateDir = path.join(repoRoot, STATE_DIR, 'turns')
-  try {
-    const { readdir } = await import('node:fs/promises')
-    const files = await readdir(stateDir)
-    const jsonFiles = files.filter((f) => f.endsWith('.json'))
-    let latest: { file: string; mtime: number } | null = null
-    for (const file of jsonFiles) {
-      const s = await stat(path.join(stateDir, file))
-      if (!latest || s.mtimeMs > latest.mtime) {
-        latest = { file, mtime: s.mtimeMs }
-      }
-    }
-    if (!latest) return null
-    return JSON.parse(await readFile(path.join(stateDir, latest.file), 'utf8')) as TurnState
-  } catch {
-    return null
-  }
-}
-
-export async function loadLatestTurnState(repoRoot: string): Promise<TurnState | null> {
-  return loadCurrentTurnState(repoRoot)
+export async function loadLatestTurnState(
+  repoRoot: string,
+  sessionId?: string,
+): Promise<TurnState | null> {
+  return loadTurnStateForSession(repoRoot, sessionId)
 }

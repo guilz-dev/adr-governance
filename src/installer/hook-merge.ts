@@ -2,10 +2,14 @@ import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 
+import type { InitPlanOperation } from '../core/types.js'
 import { atomicWriteFile } from '../core/locks.js'
 import { sha256 } from '../core/numbering.js'
+import { MANAGED_MARKER, type HookEntry } from './hook-merge-types.js'
+import { isManagedEntry, mergeNestedHookGroups } from './nested-hook-merge.js'
+import { hashFileAt } from './apply-plan.js'
 
-export const MANAGED_MARKER = 'adr-governance.mjs'
+export { MANAGED_MARKER } from './hook-merge-types.js'
 
 export type HookMergeResult = {
   path: string
@@ -13,13 +17,16 @@ export type HookMergeResult = {
   conflict?: string
 }
 
-type HookEntry = Record<string, unknown>
+export type HookMergePreview = {
+  path: string
+  content: string
+  conflict?: string
+}
 
-function isManagedEntry(entry: unknown): boolean {
-  if (!entry || typeof entry !== 'object') return false
-  const command = String((entry as HookEntry).command ?? '')
-  const name = String((entry as HookEntry).name ?? '')
-  return command.includes(MANAGED_MARKER) || name.includes('adr-governance')
+const CURSOR_MANAGED = {
+  sessionStart: [{ command: 'node .cursor/hooks/adr-governance.mjs session-start' }],
+  beforeSubmitPrompt: [{ command: 'node .cursor/hooks/adr-governance.mjs before-turn' }],
+  stop: [{ command: 'node .cursor/hooks/adr-governance.mjs after-turn', loop_limit: 1 }],
 }
 
 function entryKey(entry: HookEntry): string {
@@ -40,7 +47,7 @@ function appendUnique(entries: unknown[], toAdd: HookEntry[]): unknown[] {
 }
 
 function countManaged(entries: unknown[]): number {
-  return entries.filter(isManagedEntry).length
+  return entries.filter((e) => isManagedEntry(e, MANAGED_MARKER)).length
 }
 
 function mergeHookArrays(existing: unknown[], managed: HookEntry[]): {
@@ -57,40 +64,58 @@ function mergeHookArrays(existing: unknown[], managed: HookEntry[]): {
   return { merged: appendUnique(existing, managed) }
 }
 
-export async function mergeCursorHooks(repoRoot: string): Promise<HookMergeResult> {
+export function previewCursorHooksMerge(raw: string | null): HookMergePreview {
   const rel = '.cursor/hooks.json'
-  const abs = path.join(repoRoot, rel)
-  const managed = {
-    sessionStart: [{ command: 'node .cursor/hooks/adr-governance.mjs session-start' }],
-    beforeSubmitPrompt: [{ command: 'node .cursor/hooks/adr-governance.mjs before-turn' }],
-    stop: [{ command: 'node .cursor/hooks/adr-governance.mjs after-turn', loop_limit: 1 }],
+  if (!raw) {
+    return {
+      path: rel,
+      content: JSON.stringify({ version: 1, hooks: CURSOR_MANAGED }, null, 2) + '\n',
+    }
   }
 
-  if (!existsSync(abs)) {
-    const content = JSON.stringify({ version: 1, hooks: managed }, null, 2) + '\n'
-    await atomicWriteFile(abs, content)
-    return { path: rel, merged: true }
-  }
-
-  const raw = await readFile(abs, 'utf8')
   const doc = JSON.parse(raw) as { version?: number; hooks?: Record<string, unknown[]> }
   const hooks = doc.hooks ?? {}
 
-  for (const [key, entries] of Object.entries(managed)) {
+  for (const [key, entries] of Object.entries(CURSOR_MANAGED)) {
     const current = hooks[key] ?? []
     const { merged, conflict } = mergeHookArrays(current, entries)
-    if (conflict) return { path: rel, merged: false, conflict }
+    if (conflict) return { path: rel, content: raw, conflict }
     hooks[key] = merged as unknown[]
   }
 
   doc.hooks = hooks
-  await atomicWriteFile(abs, JSON.stringify(doc, null, 2) + '\n')
-  return { path: rel, merged: true }
+  return { path: rel, content: JSON.stringify(doc, null, 2) + '\n' }
 }
 
-export async function mergeClaudeHooks(repoRoot: string): Promise<HookMergeResult> {
-  const rel = '.claude/settings.json'
-  const abs = path.join(repoRoot, rel)
+function previewNestedRuntimeHooksMerge(
+  rel: string,
+  raw: string | null,
+  managedKeys: Record<string, { hooks: HookEntry[] }>,
+  emptyDoc: Record<string, unknown>,
+): HookMergePreview {
+  if (!raw) {
+    return {
+      path: rel,
+      content: JSON.stringify({ ...emptyDoc, hooks: managedKeys }, null, 2) + '\n',
+    }
+  }
+
+  const doc = JSON.parse(raw) as { hooks?: Record<string, unknown[]> }
+  const hooks = doc.hooks ?? {}
+
+  for (const [key, value] of Object.entries(managedKeys)) {
+    const current = hooks[key] ?? []
+    const flat = Array.isArray(current) ? current : []
+    const { merged, conflict } = mergeNestedHookGroups(flat, value.hooks, MANAGED_MARKER)
+    if (conflict) return { path: rel, content: raw, conflict }
+    hooks[key] = merged
+  }
+
+  doc.hooks = hooks
+  return { path: rel, content: JSON.stringify(doc, null, 2) + '\n' }
+}
+
+function claudeManagedKeys(): Record<string, { hooks: HookEntry[] }> {
   const entry = (phase: string) => ({
     hooks: [
       {
@@ -99,46 +124,13 @@ export async function mergeClaudeHooks(repoRoot: string): Promise<HookMergeResul
       },
     ],
   })
-
-  const managedKeys = {
+  return {
     UserPromptSubmit: entry('before-turn'),
     Stop: entry('after-turn'),
   }
-
-  if (!existsSync(abs)) {
-    const content =
-      JSON.stringify({ hooks: managedKeys }, null, 2) + '\n'
-    await atomicWriteFile(abs, content)
-    return { path: rel, merged: true }
-  }
-
-  const raw = await readFile(abs, 'utf8')
-  const doc = JSON.parse(raw) as { hooks?: Record<string, unknown[]> }
-  const hooks = doc.hooks ?? {}
-
-  for (const [key, value] of Object.entries(managedKeys)) {
-    const current = hooks[key] ?? []
-    const managedEntries = (value as { hooks: HookEntry[] }).hooks
-    const flat = Array.isArray(current) ? current : []
-    const inner = flat.flatMap((item) => {
-      if (item && typeof item === 'object' && Array.isArray((item as HookEntry).hooks)) {
-        return (item as { hooks: HookEntry[] }).hooks
-      }
-      return [item as HookEntry]
-    })
-    const { merged, conflict } = mergeHookArrays(inner, managedEntries)
-    if (conflict) return { path: rel, merged: false, conflict }
-    hooks[key] = [{ hooks: merged }]
-  }
-
-  doc.hooks = hooks
-  await atomicWriteFile(abs, JSON.stringify(doc, null, 2) + '\n')
-  return { path: rel, merged: true }
 }
 
-export async function mergeCodexHooks(repoRoot: string): Promise<HookMergeResult> {
-  const rel = '.codex/hooks.json'
-  const abs = path.join(repoRoot, rel)
+function codexManagedKeys(): Record<string, { hooks: HookEntry[] }> {
   const wrap = (phase: string) => ({
     hooks: [
       {
@@ -149,44 +141,13 @@ export async function mergeCodexHooks(repoRoot: string): Promise<HookMergeResult
       },
     ],
   })
-
-  const managedKeys = {
+  return {
     UserPromptSubmit: wrap('before-turn'),
     Stop: wrap('after-turn'),
   }
-
-  if (!existsSync(abs)) {
-    await atomicWriteFile(abs, JSON.stringify({ hooks: managedKeys }, null, 2) + '\n')
-    return { path: rel, merged: true }
-  }
-
-  const raw = await readFile(abs, 'utf8')
-  const doc = JSON.parse(raw) as { hooks?: Record<string, unknown[]> }
-  const hooks = doc.hooks ?? {}
-
-  for (const [key, value] of Object.entries(managedKeys)) {
-    const current = hooks[key] ?? []
-    const managedEntries = (value as { hooks: HookEntry[] }).hooks
-    const flat = Array.isArray(current) ? current : []
-    const inner = flat.flatMap((item) => {
-      if (item && typeof item === 'object' && Array.isArray((item as HookEntry).hooks)) {
-        return (item as { hooks: HookEntry[] }).hooks
-      }
-      return [item as HookEntry]
-    })
-    const { merged, conflict } = mergeHookArrays(inner, managedEntries)
-    if (conflict) return { path: rel, merged: false, conflict }
-    hooks[key] = [{ hooks: merged }]
-  }
-
-  doc.hooks = hooks
-  await atomicWriteFile(abs, JSON.stringify(doc, null, 2) + '\n')
-  return { path: rel, merged: true }
 }
 
-export async function mergeGeminiHooks(repoRoot: string): Promise<HookMergeResult> {
-  const rel = '.gemini/settings.json'
-  const abs = path.join(repoRoot, rel)
+function geminiManagedKeys(): Record<string, { hooks: HookEntry[] }> {
   const entry = (name: string, phase: string) => ({
     hooks: [
       {
@@ -197,39 +158,107 @@ export async function mergeGeminiHooks(repoRoot: string): Promise<HookMergeResul
       },
     ],
   })
-
-  const managedKeys = {
+  return {
     BeforeAgent: entry('adr-governance-before-turn', 'before-turn'),
     AfterAgent: entry('adr-governance-after-turn', 'after-turn'),
   }
+}
 
-  if (!existsSync(abs)) {
-    await atomicWriteFile(abs, JSON.stringify({ hooks: managedKeys }, null, 2) + '\n')
-    return { path: rel, merged: true }
+export function previewClaudeHooksMerge(raw: string | null): HookMergePreview {
+  return previewNestedRuntimeHooksMerge('.claude/settings.json', raw, claudeManagedKeys(), {})
+}
+
+export function previewCodexHooksMerge(raw: string | null): HookMergePreview {
+  return previewNestedRuntimeHooksMerge('.codex/hooks.json', raw, codexManagedKeys(), {})
+}
+
+export function previewGeminiHooksMerge(raw: string | null): HookMergePreview {
+  return previewNestedRuntimeHooksMerge('.gemini/settings.json', raw, geminiManagedKeys(), {})
+}
+
+export async function buildHookMergePlanOperations(repoRoot: string): Promise<InitPlanOperation[]> {
+  const previews = [
+    previewCursorHooksMerge(
+      existsSync(path.join(repoRoot, '.cursor/hooks.json'))
+        ? await readFile(path.join(repoRoot, '.cursor/hooks.json'), 'utf8')
+        : null,
+    ),
+    previewClaudeHooksMerge(
+      existsSync(path.join(repoRoot, '.claude/settings.json'))
+        ? await readFile(path.join(repoRoot, '.claude/settings.json'), 'utf8')
+        : null,
+    ),
+    previewCodexHooksMerge(
+      existsSync(path.join(repoRoot, '.codex/hooks.json'))
+        ? await readFile(path.join(repoRoot, '.codex/hooks.json'), 'utf8')
+        : null,
+    ),
+    previewGeminiHooksMerge(
+      existsSync(path.join(repoRoot, '.gemini/settings.json'))
+        ? await readFile(path.join(repoRoot, '.gemini/settings.json'), 'utf8')
+        : null,
+    ),
+  ]
+
+  const operations: InitPlanOperation[] = []
+  for (const preview of previews) {
+    if (preview.conflict) {
+      throw new Error(`${preview.path}: ${preview.conflict}`)
+    }
+    const expected = await hashFileAt(repoRoot, preview.path).catch(() => null)
+    if (expected === null) {
+      operations.push({ kind: 'create', path: preview.path, content: preview.content })
+    } else {
+      operations.push({
+        kind: 'replace-generated',
+        path: preview.path,
+        expectedCurrentHash: expected,
+        content: preview.content,
+      })
+    }
   }
+  return operations
+}
 
-  const raw = await readFile(abs, 'utf8')
-  const doc = JSON.parse(raw) as { hooks?: Record<string, unknown[]> }
-  const hooks = doc.hooks ?? {}
-
-  for (const [key, value] of Object.entries(managedKeys)) {
-    const current = hooks[key] ?? []
-    const managedEntries = (value as { hooks: HookEntry[] }).hooks
-    const flat = Array.isArray(current) ? current : []
-    const inner = flat.flatMap((item) => {
-      if (item && typeof item === 'object' && Array.isArray((item as HookEntry).hooks)) {
-        return (item as { hooks: HookEntry[] }).hooks
-      }
-      return [item as HookEntry]
-    })
-    const { merged, conflict } = mergeHookArrays(inner, managedEntries)
-    if (conflict) return { path: rel, merged: false, conflict }
-    hooks[key] = [{ hooks: merged }]
-  }
-
-  doc.hooks = hooks
-  await atomicWriteFile(abs, JSON.stringify(doc, null, 2) + '\n')
+export async function mergeCursorHooks(repoRoot: string): Promise<HookMergeResult> {
+  const rel = '.cursor/hooks.json'
+  const abs = path.join(repoRoot, rel)
+  const raw = existsSync(abs) ? await readFile(abs, 'utf8') : null
+  const preview = previewCursorHooksMerge(raw)
+  if (preview.conflict) return { path: rel, merged: false, conflict: preview.conflict }
+  await atomicWriteFile(abs, preview.content)
   return { path: rel, merged: true }
+}
+
+async function mergeNestedRuntimeHooks(
+  repoRoot: string,
+  rel: string,
+  preview: HookMergePreview,
+): Promise<HookMergeResult> {
+  if (preview.conflict) return { path: rel, merged: false, conflict: preview.conflict }
+  await atomicWriteFile(path.join(repoRoot, rel), preview.content)
+  return { path: rel, merged: true }
+}
+
+export async function mergeClaudeHooks(repoRoot: string): Promise<HookMergeResult> {
+  const rel = '.claude/settings.json'
+  const abs = path.join(repoRoot, rel)
+  const raw = existsSync(abs) ? await readFile(abs, 'utf8') : null
+  return mergeNestedRuntimeHooks(repoRoot, rel, previewClaudeHooksMerge(raw))
+}
+
+export async function mergeCodexHooks(repoRoot: string): Promise<HookMergeResult> {
+  const rel = '.codex/hooks.json'
+  const abs = path.join(repoRoot, rel)
+  const raw = existsSync(abs) ? await readFile(abs, 'utf8') : null
+  return mergeNestedRuntimeHooks(repoRoot, rel, previewCodexHooksMerge(raw))
+}
+
+export async function mergeGeminiHooks(repoRoot: string): Promise<HookMergeResult> {
+  const rel = '.gemini/settings.json'
+  const abs = path.join(repoRoot, rel)
+  const raw = existsSync(abs) ? await readFile(abs, 'utf8') : null
+  return mergeNestedRuntimeHooks(repoRoot, rel, previewGeminiHooksMerge(raw))
 }
 
 export async function mergeAllRuntimeHooks(repoRoot: string): Promise<HookMergeResult[]> {
@@ -241,17 +270,57 @@ export async function mergeAllRuntimeHooks(repoRoot: string): Promise<HookMergeR
   ]
 }
 
-export async function verifyCursorHookEntries(repoRoot: string): Promise<string[]> {
-  const abs = path.join(repoRoot, '.cursor/hooks.json')
-  if (!existsSync(abs)) return ['Missing .cursor/hooks.json ADR hook registration']
-  const raw = await readFile(abs, 'utf8')
-  const doc = JSON.parse(raw) as { hooks?: Record<string, unknown[]> }
-  const required = ['sessionStart', 'beforeSubmitPrompt', 'stop'] as const
+type RuntimeHookSpec = {
+  rel: string
+  keys: string[]
+}
+
+const RUNTIME_HOOKS: RuntimeHookSpec[] = [
+  { rel: '.cursor/hooks.json', keys: ['sessionStart', 'beforeSubmitPrompt', 'stop'] },
+  { rel: '.claude/settings.json', keys: ['UserPromptSubmit', 'Stop'] },
+  { rel: '.codex/hooks.json', keys: ['UserPromptSubmit', 'Stop'] },
+  { rel: '.gemini/settings.json', keys: ['BeforeAgent', 'AfterAgent'] },
+]
+
+function nestedEntriesHaveManaged(entries: unknown[]): boolean {
+  for (const item of entries) {
+    if (item && typeof item === 'object' && Array.isArray((item as HookEntry).hooks)) {
+      if ((item as { hooks: unknown[] }).hooks.some((e) => isManagedEntry(e, MANAGED_MARKER))) {
+        return true
+      }
+    } else if (isManagedEntry(item, MANAGED_MARKER)) {
+      return true
+    }
+  }
+  return false
+}
+
+function verifyRuntimeHookFile(spec: RuntimeHookSpec, raw: string): string[] {
   const issues: string[] = []
-  for (const key of required) {
+  const doc = JSON.parse(raw) as { hooks?: Record<string, unknown[]> }
+  for (const key of spec.keys) {
     const entries = doc.hooks?.[key] ?? []
-    const hasManaged = entries.some(isManagedEntry)
-    if (!hasManaged) issues.push(`Missing managed ADR hook in .cursor/hooks.json hooks.${key}`)
+    if (!nestedEntriesHaveManaged(entries)) {
+      issues.push(`Missing managed ADR hook in ${spec.rel} hooks.${key}`)
+    }
+  }
+  return issues
+}
+
+export async function verifyCursorHookEntries(repoRoot: string): Promise<string[]> {
+  return verifyAllRuntimeHookEntries(repoRoot)
+}
+
+export async function verifyAllRuntimeHookEntries(repoRoot: string): Promise<string[]> {
+  const issues: string[] = []
+  for (const spec of RUNTIME_HOOKS) {
+    const abs = path.join(repoRoot, spec.rel)
+    if (!existsSync(abs)) {
+      issues.push(`Missing ${spec.rel} ADR hook registration`)
+      continue
+    }
+    const raw = await readFile(abs, 'utf8')
+    issues.push(...verifyRuntimeHookFile(spec, raw))
   }
   return issues
 }

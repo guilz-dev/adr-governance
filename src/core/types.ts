@@ -102,6 +102,8 @@ export type InitPlanOperation =
       edits: JsoncEdit[]
     }
 
+export type InitPlanPostApplyStep = 'write-manifest'
+
 export type InitPlan = {
   schemaVersion: 1
   planId: string
@@ -111,6 +113,7 @@ export type InitPlan = {
   detectedLayout: 'none' | 'split' | 'single' | 'custom'
   proposedConfig: AdrConfig
   operations: InitPlanOperation[]
+  postApplySteps: InitPlanPostApplyStep[]
   evidenceReferences: Array<{
     operationIndex: number
     sourcePaths: string[]

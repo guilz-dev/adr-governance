@@ -10,6 +10,7 @@ export async function runTurnClose(options: {
   repoRoot: string
   outcome: 'docs-updated' | 'no-change'
   reason?: string
+  sessionId?: string
 }): Promise<void> {
   if (options.outcome === 'no-change') {
     if (!options.reason) {
@@ -26,7 +27,7 @@ export async function runTurnClose(options: {
     timestamp: new Date().toISOString(),
   }
 
-  const state = await loadCurrentTurnState(options.repoRoot)
+  const state = await loadCurrentTurnState(options.repoRoot, options.sessionId)
   if (state) {
     state.receipt = receipt
     const statePath = path.join(options.repoRoot, STATE_DIR, 'turns', `${state.turnId}.json`)

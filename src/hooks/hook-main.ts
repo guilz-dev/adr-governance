@@ -12,6 +12,7 @@ import {
 } from './adapters/cursor.js'
 import { findRepoRoot } from '../core/repository-state.js'
 import { pruneOldState } from '../core/locks.js'
+import { resolveHookTurnKey, resolveHookTurnKeyOptional } from './resolve-hook-session-id.js'
 
 async function readStdinJson(): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = []
@@ -46,7 +47,8 @@ async function main(): Promise<void> {
       const result = await runBeforeTurn({
         cwd,
         prompt,
-        sessionId: String(payload.session_id ?? payload.conversation_id ?? ''),
+        sessionId: resolveHookTurnKey(payload),
+        hookPayload: payload,
       })
       const ctx = result.hookContext
 
@@ -69,7 +71,10 @@ async function main(): Promise<void> {
     }
 
     if (phase === 'after-turn') {
-      const result = await runAfterTurn({ cwd })
+      const result = await runAfterTurn({
+        cwd,
+        sessionId: resolveHookTurnKeyOptional(payload),
+      })
       if (runtime === 'cursor') {
         process.stdout.write(JSON.stringify(toCursorStop(result.followUpMessage)))
         return

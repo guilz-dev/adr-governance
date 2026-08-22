@@ -58,7 +58,7 @@ async function cleanupStaleLocks(lockDir: string): Promise<void> {
       } catch {
         alive = false
       }
-      if (stale || !alive) {
+      if (!alive && stale) {
         await unlink(lockPath)
       }
     } catch {

@@ -11,8 +11,8 @@ import { runTurnClose } from './commands/turn-close.js'
 import { runSync } from './commands/sync.js'
 import { gitRoot } from './git.js'
 import { resolvePackageRoot } from './resolve-package-root.js'
-import { parseConfig } from '../core/config.js'
-import { defaultConfig } from '../core/config.js'
+import { parseConfig, defaultConfig } from '../core/config.js'
+import type { InitPlan } from '../core/types.js'
 import { readFile } from 'node:fs/promises'
 import { copySkillAndBundles } from '../installer/generated-files.js'
 
@@ -27,7 +27,7 @@ function usage(): void {
   adr-governance create --status proposed|accepted --title "<title>" --body-file <path> [--repo <path>]
   adr-governance promote ADR-NNNN [--approval automatic|human] [--repo <path>]
   adr-governance supersede ADR-NNNN --by ADR-MMMM [--repo <path>]
-  adr-governance turn-close --outcome docs-updated|no-change [--reason <code>] [--repo <path>]`)
+  adr-governance turn-close --outcome docs-updated|no-change [--reason <code>] [--session-id <id>] [--repo <path>]`)
 }
 
 function getArg(name: string): string | undefined {
@@ -45,7 +45,7 @@ function hasFlag(name: string): boolean {
 function firstPositionalAfter(command: string): string | undefined {
   const start = process.argv.indexOf(command)
   if (start === -1) return undefined
-  const skipValueFor = new Set(['--repo', '--from', '--approval', '--by', '--apply', '--base', '--status', '--title', '--body-file', '--outcome', '--reason'])
+  const skipValueFor = new Set(['--repo', '--from', '--approval', '--by', '--apply', '--base', '--status', '--title', '--body-file', '--outcome', '--reason', '--session-id'])
   for (let i = start + 1; i < process.argv.length; i++) {
     const arg = process.argv[i]
     if (!arg) continue
@@ -104,7 +104,7 @@ async function main(): Promise<void> {
         process.exit(result.exitCode)
       }
       const outDir = defaultInitOutputDir(repoRoot)
-      const scan = await runInitScan(repoRoot, outDir)
+      const scan = await runInitScan(repoRoot, outDir, PACKAGE_ROOT)
       console.log(
         JSON.stringify(
           {
@@ -132,15 +132,16 @@ async function main(): Promise<void> {
     }
     case 'sync': {
       const packageRoot = resolvePackageRoot(PACKAGE_ROOT, getArg('--from'))
-      const plan = {
-        schemaVersion: 1 as const,
+      const plan: InitPlan = {
+        schemaVersion: 1,
         planId: 'sync',
         repositoryRootHash: '',
         sourceHeadSha: null,
         createdAt: new Date().toISOString(),
-        detectedLayout: 'split' as const,
+        detectedLayout: 'split',
         proposedConfig: defaultConfig(),
         operations: [],
+        postApplySteps: ['write-manifest'],
         evidenceReferences: [],
       }
       const configPath = path.join(repoRoot, 'adr.config.json')
@@ -199,7 +200,7 @@ async function main(): Promise<void> {
       if (outcome === 'no-change' && !reason) {
         throw new Error('--reason required for no-change outcome')
       }
-      await runTurnClose({ repoRoot, outcome, reason })
+      await runTurnClose({ repoRoot, outcome, reason, sessionId: getArg('--session-id') })
       console.log('Turn receipt recorded.')
       break
     }
