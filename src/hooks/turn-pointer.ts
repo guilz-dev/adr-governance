@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { STATE_DIR } from '../core/repository-state.js'
@@ -45,7 +45,7 @@ export async function loadTurnStateForSession(
   const fromLegacy = await readPointerTurnState(repoRoot, LEGACY_CURRENT_TURN_POINTER)
   if (fromLegacy) return fromLegacy
 
-  return loadLatestTurnStateByMtime(repoRoot)
+  return null
 }
 
 async function readPointerTurnState(repoRoot: string, relPointer: string): Promise<TurnState | null> {
@@ -56,44 +56,6 @@ async function readPointerTurnState(repoRoot: string, relPointer: string): Promi
     if (!pointer.turnStatePath) return null
     const statePath = path.join(repoRoot, pointer.turnStatePath)
     return JSON.parse(await readFile(statePath, 'utf8')) as TurnState
-  } catch {
-    return null
-  }
-}
-
-async function loadLatestTurnStateByMtime(repoRoot: string): Promise<TurnState | null> {
-  const pointerDir = path.join(repoRoot, CURRENT_TURN_DIR)
-  try {
-    const pointerFiles = await readdir(pointerDir)
-    let latestPointer: { rel: string; mtime: number } | null = null
-    for (const file of pointerFiles.filter((f) => f.endsWith('.json'))) {
-      const rel = path.join(CURRENT_TURN_DIR, file)
-      const s = await stat(path.join(repoRoot, rel))
-      if (!latestPointer || s.mtimeMs > latestPointer.mtime) {
-        latestPointer = { rel, mtime: s.mtimeMs }
-      }
-    }
-    if (latestPointer) {
-      const state = await readPointerTurnState(repoRoot, latestPointer.rel)
-      if (state) return state
-    }
-  } catch {
-    /* fall through */
-  }
-
-  const stateDir = path.join(repoRoot, STATE_DIR, 'turns')
-  try {
-    const files = await readdir(stateDir)
-    const jsonFiles = files.filter((f) => f.endsWith('.json'))
-    let latest: { file: string; mtime: number } | null = null
-    for (const file of jsonFiles) {
-      const s = await stat(path.join(stateDir, file))
-      if (!latest || s.mtimeMs > latest.mtime) {
-        latest = { file, mtime: s.mtimeMs }
-      }
-    }
-    if (!latest) return null
-    return JSON.parse(await readFile(path.join(stateDir, latest.file), 'utf8')) as TurnState
   } catch {
     return null
   }

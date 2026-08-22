@@ -119,11 +119,14 @@ export type InitPlan = {
     sourcePaths: string[]
     rationale: string
   }>
+  reviewQuestions?: string[]
 }
 
 export type RepositoryFingerprint = {
   paths: string[]
   gitStatusHash: string
+  watchGitStatusHash: string
+  overflowWatchHash: string
   contentHashes: Record<string, string>
 }
 

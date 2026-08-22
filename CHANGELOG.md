@@ -5,6 +5,21 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8] - 2026-08-22
+
+### Fixed
+
+- Init plan: layout-aware ADR README generation (no duplicate overwrite in single layout; no forced `docs/adr/` in custom layout)
+- Init plan: connect evidence bundle to CONTEXT draft, proposed ADR candidates, and review questions
+- Init plan: generate `CONTEXT-MAP.md` only when multiple `CONTEXT.md` files are detected
+- Init plan: `evidenceReferences.sourcePaths` point at scan evidence, not generated destinations
+- Manifest: track `.adr-governance/.gitignore` for sync drift detection
+- Turn pointer: remove cross-session mtime fallback when `--session-id` is omitted
+- Skill: document required `--session-id` on `turn-close`
+- Fingerprint: detect watch-path changes via watch-scoped git status hash and overflow-path content hash
+- Fingerprint: skip v0.1.8 hash fields when comparing against pre-upgrade turn state
+- Init plan: localize `reviewQuestions` to `documents.language`
+
 ## [0.1.7] - 2026-08-22
 
 ### Fixed

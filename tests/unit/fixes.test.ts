@@ -28,8 +28,10 @@ function fingerprint(
   paths: string[],
   contentHashes: Record<string, string>,
   gitStatusHash = 'same',
+  watchGitStatusHash = gitStatusHash,
+  overflowWatchHash = 'same',
 ): RepositoryFingerprint {
-  return { paths, gitStatusHash, contentHashes }
+  return { paths, gitStatusHash, watchGitStatusHash, overflowWatchHash, contentHashes }
 }
 
 describe('legacy ADR parsing', () => {
@@ -176,9 +178,19 @@ describe('cursor hook merge', () => {
 })
 
 describe('fingerprint watch paths', () => {
-  it('does not treat git status-only changes as watch path updates', () => {
-    const before = fingerprint(['docs/adr/0001-a.md'], { 'docs/adr/0001-a.md': 'hash-a' }, 'before')
-    const after = fingerprint(['docs/adr/0001-a.md'], { 'docs/adr/0001-a.md': 'hash-a' }, 'after')
+  it('does not treat git status-only changes on non-watch paths as watch path updates', () => {
+    const before = fingerprint(
+      ['docs/adr/0001-a.md'],
+      { 'docs/adr/0001-a.md': 'hash-a' },
+      'global-before',
+      'watch-same',
+    )
+    const after = fingerprint(
+      ['docs/adr/0001-a.md'],
+      { 'docs/adr/0001-a.md': 'hash-a' },
+      'global-after',
+      'watch-same',
+    )
 
     expect(watchPathsChanged(before, after)).toBe(false)
     expect(fingerprintWatchPathsChanged(before, after)).toBe(false)
@@ -262,7 +274,13 @@ describe('turn-close pointer', () => {
       promptHash: 'abc',
       risk: 'none',
       signals: [],
-      beforeFingerprint: { paths: [], gitStatusHash: '', contentHashes: {} },
+      beforeFingerprint: {
+        paths: [],
+        gitStatusHash: '',
+        watchGitStatusHash: '',
+        overflowWatchHash: '',
+        contentHashes: {},
+      },
       relevantAdrPaths: [],
       followUpCount: 0,
       receipt: null,

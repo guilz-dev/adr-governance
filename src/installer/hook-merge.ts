@@ -87,6 +87,24 @@ export function previewCursorHooksMerge(raw: string | null): HookMergePreview {
   return { path: rel, content: JSON.stringify(doc, null, 2) + '\n' }
 }
 
+function normalizeHookGroupList(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value
+  if (value && typeof value === 'object' && Array.isArray((value as { hooks?: unknown[] }).hooks)) {
+    return [value]
+  }
+  return []
+}
+
+function nestedHooksDocument(
+  managedKeys: Record<string, { hooks: HookEntry[] }>,
+  emptyDoc: Record<string, unknown>,
+): string {
+  const hooks = Object.fromEntries(
+    Object.entries(managedKeys).map(([key, value]) => [key, [value]]),
+  )
+  return JSON.stringify({ ...emptyDoc, hooks }, null, 2) + '\n'
+}
+
 function previewNestedRuntimeHooksMerge(
   rel: string,
   raw: string | null,
@@ -96,16 +114,15 @@ function previewNestedRuntimeHooksMerge(
   if (!raw) {
     return {
       path: rel,
-      content: JSON.stringify({ ...emptyDoc, hooks: managedKeys }, null, 2) + '\n',
+      content: nestedHooksDocument(managedKeys, emptyDoc),
     }
   }
 
-  const doc = JSON.parse(raw) as { hooks?: Record<string, unknown[]> }
+  const doc = JSON.parse(raw) as { hooks?: Record<string, unknown> }
   const hooks = doc.hooks ?? {}
 
   for (const [key, value] of Object.entries(managedKeys)) {
-    const current = hooks[key] ?? []
-    const flat = Array.isArray(current) ? current : []
+    const flat = normalizeHookGroupList(hooks[key])
     const { merged, conflict } = mergeNestedHookGroups(flat, value.hooks, MANAGED_MARKER)
     if (conflict) return { path: rel, content: raw, conflict }
     hooks[key] = merged
@@ -282,8 +299,8 @@ const RUNTIME_HOOKS: RuntimeHookSpec[] = [
   { rel: '.gemini/settings.json', keys: ['BeforeAgent', 'AfterAgent'] },
 ]
 
-function nestedEntriesHaveManaged(entries: unknown[]): boolean {
-  for (const item of entries) {
+function nestedEntriesHaveManaged(entries: unknown): boolean {
+  for (const item of normalizeHookGroupList(entries)) {
     if (item && typeof item === 'object' && Array.isArray((item as HookEntry).hooks)) {
       if ((item as { hooks: unknown[] }).hooks.some((e) => isManagedEntry(e, MANAGED_MARKER))) {
         return true
@@ -299,7 +316,7 @@ function verifyRuntimeHookFile(spec: RuntimeHookSpec, raw: string): string[] {
   const issues: string[] = []
   const doc = JSON.parse(raw) as { hooks?: Record<string, unknown[]> }
   for (const key of spec.keys) {
-    const entries = doc.hooks?.[key] ?? []
+    const entries = doc.hooks?.[key]
     if (!nestedEntriesHaveManaged(entries)) {
       issues.push(`Missing managed ADR hook in ${spec.rel} hooks.${key}`)
     }

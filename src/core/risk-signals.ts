@@ -1,4 +1,5 @@
 import type { AdrConfig, ParsedAdr, RepositoryFingerprint, RiskLevel } from './types.js'
+import { hasOverflowWatchHash, hasWatchGitStatusHash } from './fingerprint-normalize.js'
 import { sha256 } from './numbering.js'
 
 const HIGH_SIGNAL_TERMS_EN = [
@@ -126,6 +127,21 @@ export function watchPathsChanged(
   before: RepositoryFingerprint,
   after: RepositoryFingerprint,
 ): boolean {
+  if (
+    hasWatchGitStatusHash(before) &&
+    hasWatchGitStatusHash(after) &&
+    before.watchGitStatusHash !== after.watchGitStatusHash
+  ) {
+    return true
+  }
+  if (
+    hasOverflowWatchHash(before) &&
+    hasOverflowWatchHash(after) &&
+    before.overflowWatchHash !== after.overflowWatchHash
+  ) {
+    return true
+  }
+
   const allPaths = new Set([...before.paths, ...after.paths])
   for (const p of allPaths) {
     if (!isWatchPath(p)) continue

@@ -14,7 +14,7 @@ export type Manifest = {
   files: Record<string, string>
 }
 
-export const GENERATOR_VERSION = '0.1.7'
+export const GENERATOR_VERSION = '0.1.8'
 
 export async function hashFile(absPath: string): Promise<string> {
   const content = await readFile(absPath, 'utf8')
@@ -27,6 +27,7 @@ export async function buildManifest(repoRoot: string, packageRoot: string): Prom
     '.agents/skills/managing-adrs',
     '.adr-governance/bin',
     '.adr-governance/schema',
+    '.adr-governance/.gitignore',
     '.cursor/rules/adr-governance.mdc',
     '.cursor/hooks/adr-governance.mjs',
     '.cursor/hooks.json',
@@ -38,7 +39,6 @@ export async function buildManifest(repoRoot: string, packageRoot: string): Prom
     '.gemini/hooks/adr-governance.mjs',
     '.gemini/settings.json',
     'adr.config.json',
-    'docs/adr/README.md',
   ]
 
   for (const rel of targets) {

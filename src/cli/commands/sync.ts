@@ -32,7 +32,7 @@ export async function runSync(options: {
   }
 
   const tracked = await gitLsFiles(options.repoRoot)
-  const operations = await buildInitPlanOperations(
+  const planBuild = await buildInitPlanOperations(
     options.packageRoot,
     options.repoRoot,
     options.plan.proposedConfig,
@@ -41,7 +41,7 @@ export async function runSync(options: {
 
   await copySkillAndBundles(options.packageRoot, options.repoRoot, {
     ...options.plan,
-    operations,
+    operations: planBuild.operations,
     postApplySteps: options.plan.postApplySteps ?? ['write-manifest'],
   })
 }

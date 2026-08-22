@@ -15,6 +15,7 @@ import { gitLsFiles, gitRevParse } from '../git.js'
 import { sha256 } from '../../core/numbering.js'
 import { validatePlanPaths } from '../../installer/apply-plan.js'
 import { buildInitPlanOperations } from '../../installer/init-plan-builder.js'
+import { buildEvidenceReferences } from '../../installer/init-evidence-plan.js'
 
 export type InitScanResult = {
   planPath: string
@@ -55,7 +56,13 @@ export async function runInitScan(
   })
 
   const ciProvider = detectCiProvider(tracked)
-  const operations = await buildInitPlanOperations(packageRoot, repoRoot, proposedConfig, ciProvider)
+  const planBuild = await buildInitPlanOperations(
+    packageRoot,
+    repoRoot,
+    proposedConfig,
+    ciProvider,
+    evidence,
+  )
 
   await mkdir(outDir, { recursive: true })
   const evidencePath = path.join(outDir, 'evidence.json')
@@ -69,13 +76,10 @@ export async function runInitScan(
     createdAt: new Date().toISOString(),
     detectedLayout: layout.detectedLayout,
     proposedConfig,
-    operations,
+    operations: planBuild.operations,
     postApplySteps: ['write-manifest'],
-    evidenceReferences: operations.map((op, index) => ({
-      operationIndex: index,
-      sourcePaths: [op.path],
-      rationale: 'Planned init apply operation',
-    })),
+    evidenceReferences: buildEvidenceReferences(planBuild.operations, planBuild.provenance),
+    reviewQuestions: planBuild.reviewQuestions,
   }
 
   const planPath = path.join(outDir, 'init-plan.json')
