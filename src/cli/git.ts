@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process'
+import { mkdir, rename } from 'node:fs/promises'
+import path from 'node:path'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
@@ -34,6 +36,23 @@ export async function gitRoot(startPath: string): Promise<string | null> {
 
 export async function gitMv(repoRoot: string, from: string, to: string): Promise<void> {
   await execFileAsync('git', ['mv', from, to], { cwd: repoRoot })
+}
+
+export async function movePathInRepo(
+  repoRoot: string,
+  from: string,
+  to: string,
+): Promise<'git' | 'fs'> {
+  try {
+    await gitMv(repoRoot, from, to)
+    return 'git'
+  } catch {
+    const fromAbs = path.join(repoRoot, from)
+    const toAbs = path.join(repoRoot, to)
+    await mkdir(path.dirname(toAbs), { recursive: true })
+    await rename(fromAbs, toAbs)
+    return 'fs'
+  }
 }
 
 export function isGitRepo(repoRoot: string): boolean {

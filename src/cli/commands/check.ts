@@ -5,9 +5,8 @@ import path from 'node:path'
 import { parseConfig } from '../../core/config.js'
 import {
   collectValidationIssues,
-  parseAdrFromPath,
 } from '../../core/validation.js'
-import { listAdrFiles, MANIFEST_PATH } from '../../core/repository-state.js'
+import { loadAllAdrs, MANIFEST_PATH } from '../../core/repository-state.js'
 import { sha256 } from '../../core/numbering.js'
 import type { ParsedAdr } from '../../core/types.js'
 import type { ValidationIssue } from '../../core/validation.js'
@@ -44,23 +43,7 @@ export async function runCheck(repoRoot: string, baseRef?: string): Promise<Chec
     }
   }
 
-  const adrs: ParsedAdr[] = []
-  const acceptedDir = path.join(repoRoot, config.layout.acceptedDir)
-  const proposedDir = path.join(repoRoot, config.layout.proposedDir)
-
-  for (const name of await listAdrFiles(acceptedDir)) {
-    const rel = path.join(config.layout.acceptedDir, name)
-    const content = await readFile(path.join(repoRoot, rel), 'utf8')
-    const parsed = parseAdrFromPath(rel, content, 'accepted', config)
-    if (parsed) adrs.push(parsed)
-  }
-
-  for (const name of await listAdrFiles(proposedDir)) {
-    const rel = path.join(config.layout.proposedDir, name)
-    const content = await readFile(path.join(repoRoot, rel), 'utf8')
-    const parsed = parseAdrFromPath(rel, content, 'proposed', config)
-    if (parsed) adrs.push(parsed)
-  }
+  const adrs = await loadAllAdrs(repoRoot, config)
 
   const issues = collectValidationIssues(adrs, config)
 

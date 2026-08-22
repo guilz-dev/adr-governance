@@ -23,6 +23,10 @@ for (const bundle of bundles) {
     format: 'esm',
     target: 'node20',
     outfile: outFile,
+    mainFields: ['module', 'main'],
+    alias: {
+      'jsonc-parser': path.join(rootDir, 'node_modules/jsonc-parser/lib/esm/main.js'),
+    },
     banner: {
       js: `// adr-governance ${bundle.name} bundle`,
     },

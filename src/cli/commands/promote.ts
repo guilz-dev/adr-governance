@@ -6,7 +6,7 @@ import { buildAdrContent, canPromoteToAccepted } from '../../core/lifecycle.js'
 import { acquireLock, atomicWriteFile } from '../../core/locks.js'
 import { listAdrFiles } from '../../core/repository-state.js'
 import { parseAdrFromPath } from '../../core/validation.js'
-import { gitMv } from '../git.js'
+import { gitMv, movePathInRepo } from '../git.js'
 import { appendAuditLog } from '../../core/audit-log.js'
 
 export async function runPromote(options: {
@@ -54,8 +54,9 @@ export async function runPromote(options: {
       const destRel = path.join(options.config.layout.acceptedDir, matchFile)
       const destAbs = path.join(options.repoRoot, destRel)
 
+      let moveKind: 'git' | 'fs'
       try {
-        await gitMv(options.repoRoot, rel, destRel)
+        moveKind = await movePathInRepo(options.repoRoot, rel, destRel)
       } catch (error) {
         throw new Error(`Promote failed: ${String(error)}`)
       }
@@ -72,10 +73,14 @@ export async function runPromote(options: {
         }
       } catch (error) {
         try {
-          await gitMv(options.repoRoot, destRel, rel)
+          if (moveKind === 'git') {
+            await gitMv(options.repoRoot, destRel, rel)
+          } else {
+            await movePathInRepo(options.repoRoot, destRel, rel)
+          }
         } catch {
           throw new Error(
-            `Promote failed after git mv; manual recovery may be required at ${destRel}: ${String(error)}`,
+            `Promote failed after move; manual recovery may be required at ${destRel}: ${String(error)}`,
           )
         }
         throw new Error(`Promote failed: ${String(error)}`)

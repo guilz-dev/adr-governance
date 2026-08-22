@@ -35,6 +35,23 @@ function getArg(name: string): string | undefined {
   return process.argv[idx + 1]
 }
 
+function firstPositionalAfter(command: string): string | undefined {
+  const start = process.argv.indexOf(command)
+  if (start === -1) return undefined
+  const skipValueFor = new Set(['--repo', '--from', '--approval', '--by', '--apply', '--base', '--status', '--title', '--body-file', '--outcome', '--reason'])
+  for (let i = start + 1; i < process.argv.length; i++) {
+    const arg = process.argv[i]
+    if (!arg) continue
+    if (skipValueFor.has(arg)) {
+      i++
+      continue
+    }
+    if (arg.startsWith('-')) continue
+    return arg
+  }
+  return undefined
+}
+
 async function resolveRepo(): Promise<string> {
   const explicit = getArg('--repo')
   if (explicit) return path.resolve(explicit)
@@ -143,7 +160,7 @@ async function main(): Promise<void> {
       break
     }
     case 'promote': {
-      const adrId = process.argv[3]
+      const adrId = firstPositionalAfter('promote')
       if (!adrId) throw new Error('Missing ADR id')
       const config = parseConfig(
         JSON.parse(await readFile(path.join(repoRoot, 'adr.config.json'), 'utf8')),
@@ -158,7 +175,7 @@ async function main(): Promise<void> {
       break
     }
     case 'supersede': {
-      const oldId = process.argv[3]
+      const oldId = firstPositionalAfter('supersede')
       const newId = getArg('--by')
       if (!oldId || !newId) throw new Error('Usage: supersede ADR-NNNN --by ADR-MMMM')
       const config = parseConfig(

@@ -38,8 +38,10 @@ export function detectExistingLayout(repoRoot: string, trackedFiles: string[]): 
   const acceptedDirs = acceptedCandidates.filter((d) =>
     trackedFiles.some((f) => f.startsWith(`${d}/`) || f === d),
   )
-  const proposedDirs = proposedCandidates.filter((d) =>
-    trackedFiles.some((f) => f.startsWith(`${d}/`) || f === d),
+  const proposedDirs = proposedCandidates.filter(
+    (d) =>
+      trackedFiles.some((f) => f.startsWith(`${d}/`) || f === d) ||
+      existsSync(path.join(repoRoot, d)),
   )
 
   const contextFiles = trackedFiles.filter(
