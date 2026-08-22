@@ -160,6 +160,7 @@ export type ParsedAdr = {
   title: string
   body: string
   hasOpenPoints: boolean
+  legacy?: boolean
 }
 
 export const NO_ADR_REASONS: readonly NoAdrReason[] = [

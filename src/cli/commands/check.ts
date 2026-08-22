@@ -11,6 +11,7 @@ import { listAdrFiles, MANIFEST_PATH } from '../../core/repository-state.js'
 import { sha256 } from '../../core/numbering.js'
 import type { ParsedAdr } from '../../core/types.js'
 import type { ValidationIssue } from '../../core/validation.js'
+import { verifyCursorHookEntries } from '../../installer/hook-merge.js'
 
 export type CheckResult = {
   ok: boolean
@@ -98,6 +99,16 @@ export async function runCheck(repoRoot: string, baseRef?: string): Promise<Chec
   if (baseRef) {
     const baseIssues = await checkBaseRefDuplicates(repoRoot, baseRef, adrs)
     issues.push(...baseIssues)
+  }
+
+  for (const message of await verifyCursorHookEntries(repoRoot)) {
+    if (existsSync(manifestPath)) {
+      issues.push({
+        severity: 'error',
+        code: 'missing-hook-entry',
+        message,
+      })
+    }
   }
 
   const errors = issues.filter((i) => i.severity === 'error')

@@ -155,7 +155,22 @@ export function parseAdrFromPath(
   if (!parsedName) return null
 
   const { frontmatter, body } = parseFrontmatter(content)
-  if (!frontmatter) return null
+
+  if (!frontmatter) {
+    const inferredStatus = directory === 'accepted' ? 'accepted' : 'proposed'
+    return {
+      id: formatAdrId(parsedName.number, config.documents.idDigits),
+      number: parsedName.number,
+      slug: parsedName.slug,
+      path: relativePath,
+      directory,
+      frontmatter: { status: inferredStatus, date: 'legacy' },
+      title: extractTitle(body || content),
+      body: body || content,
+      hasOpenPoints: hasOpenPoints(body || content),
+      legacy: true,
+    }
+  }
 
   return {
     id: formatAdrId(parsedName.number, config.documents.idDigits),

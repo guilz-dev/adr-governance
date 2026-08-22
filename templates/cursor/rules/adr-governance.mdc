@@ -3,5 +3,9 @@ description: Keep ADR and CONTEXT records aligned with architectural decisions.
 alwaysApply: true
 ---
 
-ADR governance is active. When the hook reports possible or likely architectural
-impact, read `.agents/skills/managing-adrs/SKILL.md` completely and follow it.
+ADR governance is active.
+
+When `.adr-governance/state/current-turn.json` reports `risk` as `possible` or `likely`,
+read `.agents/skills/managing-adrs/SKILL.md` completely and follow it.
+
+Otherwise, apply the three ADR criteria when making design decisions and keep CONTEXT aligned.

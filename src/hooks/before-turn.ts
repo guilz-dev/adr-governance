@@ -1,9 +1,9 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 
 import { parseConfig } from '../core/config.js'
-import { hashPrompt, assessPromptRisk, rankRelevantAdrs, buildFingerprint } from '../core/risk-signals.js'
+import { hashPrompt, assessPromptRisk, rankRelevantAdrs } from '../core/risk-signals.js'
 import {
   findRepoRoot,
   loadAllAdrs,
@@ -12,7 +12,10 @@ import {
 } from '../core/repository-state.js'
 import { buildHookContext } from './common.js'
 import type { TurnState } from '../core/types.js'
-import { sha256 } from '../core/numbering.js'
+import { buildRepositoryFingerprint } from '../core/fingerprint.js'
+import { gitLsFiles } from '../cli/git.js'
+
+export const CURRENT_TURN_POINTER = '.adr-governance/state/current-turn.json'
 
 export type BeforeTurnInput = {
   cwd: string
@@ -54,6 +57,9 @@ export async function runBeforeTurn(input: BeforeTurnInput): Promise<BeforeTurnR
     relevant.map((a) => a.path),
   )
 
+  const tracked = await gitLsFiles(repoRoot)
+  const beforeFingerprint = await buildRepositoryFingerprint(repoRoot, tracked)
+
   const stateDir = path.join(repoRoot, STATE_DIR, 'turns')
   await mkdir(stateDir, { recursive: true })
 
@@ -67,7 +73,7 @@ export async function runBeforeTurn(input: BeforeTurnInput): Promise<BeforeTurnR
     promptHash: hashPrompt(input.prompt),
     risk,
     signals,
-    beforeFingerprint: buildFingerprint([], sha256(''), {}),
+    beforeFingerprint,
     relevantAdrPaths: relevant.map((a) => a.path),
     followUpCount: 0,
     receipt: null,
@@ -77,20 +83,60 @@ export async function runBeforeTurn(input: BeforeTurnInput): Promise<BeforeTurnR
   const turnStatePath = path.join(stateDir, `${turnId}.json`)
   await writeFile(turnStatePath, JSON.stringify(turnState, null, 2))
 
+  const pointerPath = path.join(repoRoot, CURRENT_TURN_POINTER)
+  await mkdir(path.dirname(pointerPath), { recursive: true })
+  await writeFile(
+    pointerPath,
+    JSON.stringify(
+      {
+        turnId,
+        turnStatePath: path.relative(repoRoot, turnStatePath),
+        risk,
+        fullInstruction: hookContext.fullInstruction,
+        updatedAt: turnState.createdAt,
+      },
+      null,
+      2,
+    ),
+  )
+
   return { ok: true, hookContext, turnStatePath }
 }
 
-export async function loadLatestTurnState(repoRoot: string): Promise<TurnState | null> {
+export async function loadCurrentTurnState(repoRoot: string): Promise<TurnState | null> {
+  const pointerPath = path.join(repoRoot, CURRENT_TURN_POINTER)
+  try {
+    const pointer = JSON.parse(await readFile(pointerPath, 'utf8')) as {
+      turnStatePath?: string
+    }
+    if (!pointer.turnStatePath) return null
+    const statePath = path.join(repoRoot, pointer.turnStatePath)
+    return JSON.parse(await readFile(statePath, 'utf8')) as TurnState
+  } catch {
+    return loadLatestTurnStateByMtime(repoRoot)
+  }
+}
+
+async function loadLatestTurnStateByMtime(repoRoot: string): Promise<TurnState | null> {
   const stateDir = path.join(repoRoot, STATE_DIR, 'turns')
   try {
     const { readdir } = await import('node:fs/promises')
     const files = await readdir(stateDir)
-    const jsonFiles = files.filter((f) => f.endsWith('.json')).sort()
-    const latest = jsonFiles.at(-1)
+    const jsonFiles = files.filter((f) => f.endsWith('.json'))
+    let latest: { file: string; mtime: number } | null = null
+    for (const file of jsonFiles) {
+      const s = await stat(path.join(stateDir, file))
+      if (!latest || s.mtimeMs > latest.mtime) {
+        latest = { file, mtime: s.mtimeMs }
+      }
+    }
     if (!latest) return null
-    const raw = await readFile(path.join(stateDir, latest), 'utf8')
-    return JSON.parse(raw) as TurnState
+    return JSON.parse(await readFile(path.join(stateDir, latest.file), 'utf8')) as TurnState
   } catch {
     return null
   }
+}
+
+export async function loadLatestTurnState(repoRoot: string): Promise<TurnState | null> {
+  return loadCurrentTurnState(repoRoot)
 }

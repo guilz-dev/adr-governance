@@ -2,7 +2,7 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { runInitScan, loadInitPlan, applyInitPlan } from './commands/init.js'
+import { runInitScan, loadInitPlan, applyInitPlan, defaultInitOutputDir } from './commands/init.js'
 import { runCheck } from './commands/check.js'
 import { runCreate, runPromote, runSupersede, runTurnClose } from './commands/create.js'
 import { runSync } from './commands/sync.js'
@@ -61,7 +61,7 @@ async function main(): Promise<void> {
         console.log(JSON.stringify({ applied: true, check: result }, null, 2))
         process.exit(result.exitCode)
       }
-      const outDir = path.join(repoRoot, '.adr-governance', 'init-output')
+      const outDir = defaultInitOutputDir(repoRoot)
       const scan = await runInitScan(repoRoot, outDir)
       console.log(
         JSON.stringify(

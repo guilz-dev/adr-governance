@@ -4,9 +4,9 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 
 import type { InitPlan } from '../core/types.js'
-import { defaultConfig } from '../core/config.js'
 import { atomicWriteFile } from '../core/locks.js'
 import { sha256 } from '../core/numbering.js'
+import { mergeAllRuntimeHooks } from './hook-merge.js'
 
 export type Manifest = {
   version: string
@@ -14,7 +14,7 @@ export type Manifest = {
   files: Record<string, string>
 }
 
-export const GENERATOR_VERSION = '0.1.0'
+export const GENERATOR_VERSION = '0.1.1'
 
 export async function hashFile(absPath: string): Promise<string> {
   const content = await readFile(absPath, 'utf8')
@@ -29,6 +29,7 @@ export async function buildManifest(repoRoot: string, packageRoot: string): Prom
     '.adr-governance/schema',
     '.cursor/rules/adr-governance.mdc',
     '.cursor/hooks/adr-governance.mjs',
+    '.cursor/hooks.json',
     '.claude/commands/adr.md',
     '.claude/hooks/adr-governance.mjs',
     '.codex/hooks/adr-governance.mjs',
@@ -102,17 +103,23 @@ export async function copySkillAndBundles(
     await copyFile(srcPath, destPath)
   }
 
-  const manifest = await buildManifest(repoRoot, packageRoot)
-  await atomicWriteFile(
-    path.join(repoRoot, '.adr-governance/manifest.json'),
-    JSON.stringify(manifest, null, 2) + '\n',
-  )
-
   for (const op of plan.operations) {
     if (op.kind === 'create') {
       await atomicWriteFile(path.join(repoRoot, op.path), op.content)
     }
   }
+
+  const hookResults = await mergeAllRuntimeHooks(repoRoot)
+  const conflicts = hookResults.filter((r) => r.conflict)
+  if (conflicts.length > 0) {
+    throw new Error(conflicts.map((c) => `${c.path}: ${c.conflict}`).join('\n'))
+  }
+
+  const manifest = await buildManifest(repoRoot, packageRoot)
+  await atomicWriteFile(
+    path.join(repoRoot, '.adr-governance/manifest.json'),
+    JSON.stringify(manifest, null, 2) + '\n',
+  )
 }
 
 async function copyDir(src: string, dest: string): Promise<void> {

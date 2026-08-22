@@ -1,11 +1,16 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { readdir } from 'node:fs/promises'
 
 import { parseConfig } from '../core/config.js'
 import { findRepoRoot, readConfig, STATE_DIR } from '../core/repository-state.js'
 import { decideAfterTurn } from './common.js'
-import type { TurnState } from '../core/types.js'
+import { loadCurrentTurnState } from './before-turn.js'
+import {
+  buildRepositoryFingerprint,
+  detectDocsPathsUpdated,
+  fingerprintWatchPathsChanged,
+} from '../core/fingerprint.js'
+import { gitLsFiles } from '../cli/git.js'
 
 export type AfterTurnInput = {
   cwd: string
@@ -15,18 +20,6 @@ export type AfterTurnResult = {
   allowFinish: boolean
   followUpMessage?: string
   warning?: string
-}
-
-async function loadLatestTurn(repoRoot: string): Promise<TurnState | null> {
-  const stateDir = path.join(repoRoot, STATE_DIR, 'turns')
-  try {
-    const files = await readdir(stateDir)
-    const latest = files.filter((f) => f.endsWith('.json')).sort().at(-1)
-    if (!latest) return null
-    return JSON.parse(await readFile(path.join(stateDir, latest), 'utf8')) as TurnState
-  } catch {
-    return null
-  }
 }
 
 export async function runAfterTurn(input: AfterTurnInput): Promise<AfterTurnResult> {
@@ -47,47 +40,30 @@ export async function runAfterTurn(input: AfterTurnInput): Promise<AfterTurnResu
     return { allowFinish: true }
   }
 
-  const state = await loadLatestTurn(repoRoot)
+  const state = await loadCurrentTurnState(repoRoot)
   if (!state) return { allowFinish: true }
 
-  const docsUpdated = await detectDocsUpdated(repoRoot, config.layout.acceptedDir, config.layout.proposedDir, config.layout.contextFile, state.createdAt)
+  const docPaths = [
+    config.layout.acceptedDir,
+    config.layout.proposedDir,
+    config.layout.contextFile,
+    config.layout.contextMapFile,
+  ]
 
-  const decision = decideAfterTurn(state, docsUpdated, false, config)
+  const docsUpdated = await detectDocsPathsUpdated(repoRoot, docPaths, state.createdAt)
+
+  const tracked = await gitLsFiles(repoRoot)
+  const afterFingerprint = await buildRepositoryFingerprint(repoRoot, tracked)
+  const watchChanged = fingerprintWatchPathsChanged(state.beforeFingerprint, afterFingerprint)
+
+  const decision = decideAfterTurn(state, docsUpdated, watchChanged, config)
 
   if (!decision.allowFinish && decision.followUpMessage) {
     state.followUpCount += 1
     const stateDir = path.join(repoRoot, STATE_DIR, 'turns')
-    const files = await readdir(stateDir)
-    const latest = files.filter((f) => f.endsWith('.json')).sort().at(-1)
-    if (latest) {
-      await writeFile(path.join(stateDir, latest), JSON.stringify(state, null, 2))
-    }
+    const statePath = path.join(stateDir, `${state.turnId}.json`)
+    await writeFile(statePath, JSON.stringify(state, null, 2))
   }
 
   return decision
-}
-
-async function detectDocsUpdated(
-  repoRoot: string,
-  acceptedDir: string,
-  proposedDir: string,
-  contextFile: string,
-  sinceIso: string,
-): Promise<boolean> {
-  const since = new Date(sinceIso).getTime()
-  const paths = [acceptedDir, proposedDir, contextFile]
-  const { stat } = await import('node:fs/promises')
-  const { existsSync } = await import('node:fs')
-
-  for (const p of paths) {
-    const abs = path.join(repoRoot, p)
-    if (!existsSync(abs)) continue
-    try {
-      const s = await stat(abs)
-      if (s.mtimeMs >= since) return true
-    } catch {
-      continue
-    }
-  }
-  return false
 }

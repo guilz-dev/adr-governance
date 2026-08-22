@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
+import os from 'node:os'
 
 import { defaultConfig, configForSingleDir, parseConfig } from '../../core/config.js'
 import { buildEvidenceBundle, detectExistingLayout } from '../../analysis/repository-scan.js'
@@ -93,3 +94,11 @@ export async function applyInitPlan(
 }
 
 export { parseConfig }
+
+export function defaultInitOutputDir(repoRoot: string): string {
+  return path.join(
+    os.tmpdir(),
+    'adr-governance-init',
+    sha256(repoRoot).slice(0, 16),
+  )
+}

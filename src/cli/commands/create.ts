@@ -4,14 +4,14 @@ import path from 'node:path'
 import type { AdrConfig, AdrStatus } from '../../core/types.js'
 import {
   formatAdrFilename,
+  formatAdrId,
   nextAdrNumber,
+  parseAdrFilename,
   slugifyTitle,
 } from '../../core/numbering.js'
-import { buildAdrContent } from '../../core/lifecycle.js'
+import { buildAdrContent, canPromoteToAccepted } from '../../core/lifecycle.js'
 import { acquireLock, atomicWriteFile } from '../../core/locks.js'
 import { listAdrFiles } from '../../core/repository-state.js'
-import { parseAdrFilename } from '../../core/numbering.js'
-import { canPromoteToAccepted } from '../../core/lifecycle.js'
 import { parseAdrFromPath } from '../../core/validation.js'
 import { gitMv } from '../git.js'
 
@@ -113,8 +113,13 @@ export async function runPromote(options: {
     if (options.config.layout.mode === 'split') {
       const destRel = path.join(options.config.layout.acceptedDir, matchFile)
       const destAbs = path.join(options.repoRoot, destRel)
-      await atomicWriteFile(destAbs, newContent)
-      await gitMv(options.repoRoot, rel, destRel)
+
+      try {
+        await gitMv(options.repoRoot, rel, destRel)
+        await atomicWriteFile(destAbs, newContent)
+      } catch (error) {
+        throw new Error(`Promote failed: ${String(error)}`)
+      }
       return destRel
     }
 
@@ -142,6 +147,25 @@ export async function runSupersede(options: {
     const digits = options.config.documents.idDigits
     const oldFile = files.find((f) => f.startsWith(`${oldNum.padStart(digits, '0')}-`))
     if (!oldFile) throw new Error(`Old ADR not found: ${options.oldAdrId}`)
+
+    const newFile = files.find((f) => f.startsWith(`${newNum.padStart(digits, '0')}-`))
+    if (!newFile) throw new Error(`New ADR not found: ${options.newAdrId}`)
+
+    const newRel = path.join(options.config.layout.acceptedDir, newFile)
+    const newContent = await readFile(path.join(options.repoRoot, newRel), 'utf8')
+    const newParsed = parseAdrFromPath(newRel, newContent, 'accepted', options.config)
+    if (!newParsed) throw new Error('Could not parse new ADR')
+    if (newParsed.frontmatter.status !== 'accepted') {
+      throw new Error(`New ADR must be accepted before superseding: ${options.newAdrId}`)
+    }
+    const oldId = formatAdrId(Number.parseInt(oldNum, 10), digits)
+    if (
+      !newContent.includes(oldId) &&
+      !newContent.includes(oldFile.replace('.md', '')) &&
+      !newContent.toLowerCase().includes(`adr-${oldNum}`)
+    ) {
+      throw new Error(`New ADR must reference the superseded ADR (${oldId})`)
+    }
 
     const rel = path.join(options.config.layout.acceptedDir, oldFile)
     const content = await readFile(path.join(options.repoRoot, rel), 'utf8')
