@@ -18,18 +18,29 @@ function findRepoRoot(start) {
   }
 }
 
+function failOpen() {
+  process.stdout.write(JSON.stringify({ decision: 'allow' }))
+}
+
 const phase = process.argv[2] ?? 'before-turn'
 const repoRoot = process.env.GEMINI_PROJECT_DIR ?? findRepoRoot(process.cwd())
 
 if (!repoRoot) {
-  process.stdout.write(JSON.stringify({ decision: 'allow' }))
+  failOpen()
   process.exit(0)
 }
 
 const hookBin = path.join(repoRoot, '.adr-governance/bin/hook.mjs')
+const chunks = []
+for await (const chunk of process.stdin) chunks.push(chunk)
 const child = spawn(process.execPath, [hookBin, 'gemini', phase], {
   cwd: repoRoot,
-  stdio: ['inherit', 'pipe', 'inherit'],
+  stdio: ['pipe', 'pipe', 'inherit'],
 })
+child.stdin.end(Buffer.concat(chunks))
 child.stdout.pipe(process.stdout)
+child.on('error', () => {
+  failOpen()
+  process.exit(0)
+})
 child.on('exit', (code) => process.exit(code ?? 0))

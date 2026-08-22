@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { existsSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 
@@ -28,18 +27,29 @@ function gitRoot(cwd) {
   }
 }
 
+function failOpen() {
+  process.stdout.write(JSON.stringify({ continue: true }))
+}
+
 const phase = process.argv[2] ?? 'before-turn'
 const repoRoot = gitRoot(process.cwd()) ?? findRepoRoot(process.cwd())
 
 if (!repoRoot) {
-  process.stdout.write(JSON.stringify({ continue: true }))
+  failOpen()
   process.exit(0)
 }
 
 const hookBin = path.join(repoRoot, '.adr-governance/bin/hook.mjs')
+const chunks = []
+for await (const chunk of process.stdin) chunks.push(chunk)
 const child = spawn(process.execPath, [hookBin, 'codex', phase], {
   cwd: repoRoot,
-  stdio: ['inherit', 'pipe', 'inherit'],
+  stdio: ['pipe', 'pipe', 'inherit'],
 })
+child.stdin.end(Buffer.concat(chunks))
 child.stdout.pipe(process.stdout)
+child.on('error', () => {
+  failOpen()
+  process.exit(0)
+})
 child.on('exit', (code) => process.exit(code ?? 0))

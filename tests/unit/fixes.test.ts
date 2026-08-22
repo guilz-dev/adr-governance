@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { mkdtemp, mkdir, writeFile, readFile, unlink } from 'node:fs/promises'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -14,6 +14,7 @@ import type { RepositoryFingerprint } from '../../src/core/types.js'
 import { runCheck } from '../../src/cli/commands/check.js'
 import { runTurnClose } from '../../src/cli/commands/turn-close.js'
 import { loadCurrentTurnState } from '../../src/hooks/before-turn.js'
+import { resolvePackageRoot } from '../../src/cli/resolve-package-root.js'
 import type { TurnState } from '../../src/core/types.js'
 
 const exec = promisify(execFile)
@@ -180,5 +181,115 @@ describe('turn-close pointer', () => {
     const updated = await loadCurrentTurnState(repo)
     expect(updated?.receipt?.outcome).toBe('no-change')
     expect(updated?.receipt?.reason).toBe('no-decision')
+  })
+})
+
+describe('resolvePackageRoot', () => {
+  const packageRoot = path.resolve(import.meta.dirname, '../..')
+
+  it('accepts the adr-governance repository root', () => {
+    expect(resolvePackageRoot(packageRoot)).toBe(packageRoot)
+  })
+
+  it('rejects a target repo root without skill and bundles', () => {
+    expect(() => resolvePackageRoot('/tmp/not-a-package')).toThrow(/Requires the adr-governance package root/)
+  })
+})
+
+describe('CLI flags', () => {
+  const cli = path.resolve(import.meta.dirname, '../../dist/cli/main.js')
+
+  it('emits JSON when --json is the last argument', async () => {
+    const repo = await mkdtemp(path.join(tmpdir(), 'adr-json-flag-'))
+    const { stdout, stderr } = await exec(process.execPath, [cli, 'check', '--repo', repo, '--json'], {
+      encoding: 'utf8',
+    }).catch((error: { stdout?: string; stderr?: string }) => error)
+
+    const raw = stdout ?? stderr ?? ''
+    expect(raw.trim().startsWith('{')).toBe(true)
+    const parsed = JSON.parse(raw) as { issues: Array<{ code: string }> }
+    expect(parsed.issues.some((i) => i.code === 'missing-config')).toBe(true)
+  })
+})
+
+describe('cursor hook wrapper stdin', () => {
+  it('forwards prompt JSON to the bundled hook', async () => {
+    const repo = await mkdtemp(path.join(tmpdir(), 'adr-hook-stdin-'))
+    await writeFile(path.join(repo, 'adr.config.json'), JSON.stringify(defaultConfig(), null, 2))
+    await mkdir(path.join(repo, '.adr-governance/bin'), { recursive: true })
+    await mkdir(path.join(repo, '.cursor/hooks'), { recursive: true })
+    await writeFile(path.join(repo, '.adr-governance/manifest.json'), '{}\n')
+
+    const hookSrc = path.resolve(import.meta.dirname, '../../dist/bundle/hook.mjs')
+    const wrapperSrc = path.resolve(
+      import.meta.dirname,
+      '../../templates/cursor/hooks/adr-governance.mjs',
+    )
+    await writeFile(
+      path.join(repo, '.adr-governance/bin/hook.mjs'),
+      await readFile(hookSrc, 'utf8'),
+    )
+    await writeFile(
+      path.join(repo, '.cursor/hooks/adr-governance.mjs'),
+      await readFile(wrapperSrc, 'utf8'),
+    )
+
+    const stdout = await new Promise<string>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const child = spawn(
+        process.execPath,
+        [path.join(repo, '.cursor/hooks/adr-governance.mjs'), 'session-start'],
+        { cwd: repo, stdio: ['pipe', 'pipe', 'pipe'] },
+      )
+      const chunks: Buffer[] = []
+      child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk))
+      child.stderr.on('data', (chunk: Buffer) => chunks.push(chunk))
+      child.on('error', reject)
+      child.on('exit', (code) => {
+        if (timer) clearTimeout(timer)
+        const text = Buffer.concat(chunks).toString('utf8')
+        if (code === 0) resolve(text)
+        else reject(new Error(`hook wrapper exited ${code}: ${text}`))
+      })
+      child.stdin.end(
+        JSON.stringify({
+          prompt: 'We need a new database migration for auth architecture',
+          cwd: repo,
+        }),
+      )
+      timer = setTimeout(() => {
+        child.kill('SIGKILL')
+        reject(new Error('hook wrapper timed out'))
+      }, 8000)
+    })
+
+    const parsed = JSON.parse(stdout) as { additional_context?: string }
+    expect(parsed.additional_context).toContain('ADR governance')
+
+    const after = await new Promise<string>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const child = spawn(
+        process.execPath,
+        [path.join(repo, '.cursor/hooks/adr-governance.mjs'), 'after-turn'],
+        { cwd: repo, stdio: ['pipe', 'pipe', 'pipe'] },
+      )
+      const chunks: Buffer[] = []
+      child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk))
+      child.on('error', reject)
+      child.on('exit', (code) => {
+        if (timer) clearTimeout(timer)
+        const text = Buffer.concat(chunks).toString('utf8')
+        if (code === 0) resolve(text)
+        else reject(new Error(`after-turn exited ${code}: ${text}`))
+      })
+      child.stdin.end(JSON.stringify({ cwd: repo }))
+      timer = setTimeout(() => {
+        child.kill('SIGKILL')
+        reject(new Error('after-turn timed out'))
+      }, 8000)
+    })
+
+    const afterParsed = JSON.parse(after) as { followup_message?: string }
+    expect(afterParsed.followup_message).toContain('ADR audit')
   })
 })

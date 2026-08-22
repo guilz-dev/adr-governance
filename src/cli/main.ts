@@ -10,6 +10,7 @@ import { runSupersede } from './commands/supersede.js'
 import { runTurnClose } from './commands/turn-close.js'
 import { runSync } from './commands/sync.js'
 import { gitRoot } from './git.js'
+import { resolvePackageRoot } from './resolve-package-root.js'
 import { parseConfig } from '../core/config.js'
 import { defaultConfig } from '../core/config.js'
 import { readFile } from 'node:fs/promises'
@@ -20,9 +21,9 @@ const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
 function usage(): void {
   console.error(`Usage:
   adr-governance init [--repo <path>]
-  adr-governance init --apply <plan.json> [--repo <path>]
+  adr-governance init --apply <plan.json> [--from <package-root>] [--repo <path>]
   adr-governance check [--base <git-ref>] [--json] [--repo <path>]
-  adr-governance sync --from <release-or-path> [--repo <path>]
+  adr-governance sync [--from <package-root>] [--repo <path>]
   adr-governance create --status proposed|accepted --title "<title>" --body-file <path> [--repo <path>]
   adr-governance promote ADR-NNNN [--approval automatic|human] [--repo <path>]
   adr-governance supersede ADR-NNNN --by ADR-MMMM [--repo <path>]
@@ -32,7 +33,13 @@ function usage(): void {
 function getArg(name: string): string | undefined {
   const idx = process.argv.indexOf(name)
   if (idx === -1) return undefined
-  return process.argv[idx + 1]
+  const value = process.argv[idx + 1]
+  if (!value || value.startsWith('-')) return undefined
+  return value
+}
+
+function hasFlag(name: string): boolean {
+  return process.argv.includes(name)
 }
 
 function firstPositionalAfter(command: string): string | undefined {
@@ -73,9 +80,10 @@ async function main(): Promise<void> {
     case 'init': {
       const applyPlan = getArg('--apply')
       if (applyPlan) {
+        const packageRoot = resolvePackageRoot(PACKAGE_ROOT, getArg('--from'))
         const plan = await loadInitPlan(path.resolve(applyPlan))
         await applyInitPlan(repoRoot, plan, async (root, p) => {
-          await copySkillAndBundles(PACKAGE_ROOT, root, p)
+          await copySkillAndBundles(packageRoot, root, p)
         })
         const result = await runCheck(repoRoot)
         console.log(
@@ -113,7 +121,7 @@ async function main(): Promise<void> {
     case 'check': {
       const base = getArg('--base')
       const result = await runCheck(repoRoot, base)
-      if (getArg('--json')) {
+      if (hasFlag('--json')) {
         console.log(JSON.stringify(result, null, 2))
       } else {
         for (const issue of result.issues) {
@@ -123,8 +131,7 @@ async function main(): Promise<void> {
       process.exit(result.exitCode)
     }
     case 'sync': {
-      const from = getArg('--from')
-      const packageRoot = from ? path.resolve(from) : PACKAGE_ROOT
+      const packageRoot = resolvePackageRoot(PACKAGE_ROOT, getArg('--from'))
       const plan = {
         schemaVersion: 1 as const,
         planId: 'sync',

@@ -1,6 +1,6 @@
 {
   "name": "@guilz-dev/adr-governance",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Multi-runtime ADR governance — Skill, CLI, and hooks for Cursor, Claude Code, Codex CLI, and Gemini CLI.",
   "type": "module",
   "license": "MIT",

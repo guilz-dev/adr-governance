@@ -31,6 +31,14 @@ node /path/to/adr-governance/dist/bundle/cli.mjs init \
   --repo /path/to/your-repo
 ```
 
+When using the **installed** CLI inside a target repo (`.adr-governance/bin/cli.mjs`), pass the package source for apply and sync:
+
+```bash
+node .adr-governance/bin/cli.mjs init --apply /path/to/init-plan.json \
+  --from /path/to/adr-governance --repo .
+node .adr-governance/bin/cli.mjs sync --from /path/to/adr-governance --repo .
+```
+
 After apply, the target repo contains:
 
 - `.agents/skills/managing-adrs/` — Skill canonical copy
