@@ -1,7 +1,8 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import type { AdrConfig, AdrStatus } from '../../core/types.js'
+import type { AdrConfig, AdrStatus, NoAdrReason } from '../../core/types.js'
+import { NO_ADR_REASONS } from '../../core/types.js'
 import {
   formatAdrFilename,
   formatAdrId,
@@ -14,6 +15,7 @@ import { acquireLock, atomicWriteFile } from '../../core/locks.js'
 import { listAdrFiles } from '../../core/repository-state.js'
 import { parseAdrFromPath } from '../../core/validation.js'
 import { gitMv } from '../git.js'
+import { appendAuditLog } from '../../core/audit-log.js'
 
 export async function runCreate(options: {
   repoRoot: string
@@ -117,6 +119,14 @@ export async function runPromote(options: {
       try {
         await gitMv(options.repoRoot, rel, destRel)
         await atomicWriteFile(destAbs, newContent)
+        if ((options.approval ?? 'automatic') === 'human') {
+          await appendAuditLog(options.repoRoot, {
+            kind: 'promotion',
+            adrId: options.adrId,
+            approval: 'human',
+            method: 'cli',
+          })
+        }
       } catch (error) {
         throw new Error(`Promote failed: ${String(error)}`)
       }
@@ -193,6 +203,15 @@ export async function runTurnClose(options: {
   outcome: 'docs-updated' | 'no-change'
   reason?: string
 }): Promise<void> {
+  if (options.outcome === 'no-change') {
+    if (!options.reason) {
+      throw new Error('--reason is required when outcome is no-change')
+    }
+    if (!NO_ADR_REASONS.includes(options.reason as NoAdrReason)) {
+      throw new Error(`Invalid reason code: ${options.reason}`)
+    }
+  }
+
   const { mkdir, writeFile, readdir } = await import('node:fs/promises')
   const stateDir = path.join(options.repoRoot, '.adr-governance/state/turns')
   await mkdir(stateDir, { recursive: true })

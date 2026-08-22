@@ -7,6 +7,7 @@ import type { InitPlan } from '../core/types.js'
 import { atomicWriteFile } from '../core/locks.js'
 import { sha256 } from '../core/numbering.js'
 import { mergeAllRuntimeHooks } from './hook-merge.js'
+import { applyPlanOperations } from './apply-plan.js'
 
 export type Manifest = {
   version: string
@@ -14,7 +15,7 @@ export type Manifest = {
   files: Record<string, string>
 }
 
-export const GENERATOR_VERSION = '0.1.1'
+export const GENERATOR_VERSION = '0.1.2'
 
 export async function hashFile(absPath: string): Promise<string> {
   const content = await readFile(absPath, 'utf8')
@@ -103,11 +104,12 @@ export async function copySkillAndBundles(
     await copyFile(srcPath, destPath)
   }
 
-  for (const op of plan.operations) {
-    if (op.kind === 'create') {
-      await atomicWriteFile(path.join(repoRoot, op.path), op.content)
-    }
-  }
+  const filteredOperations = plan.operations.filter((op) => {
+    if (op.kind !== 'create') return true
+    return !existsSync(path.join(repoRoot, op.path))
+  })
+
+  await applyPlanOperations(repoRoot, filteredOperations)
 
   const hookResults = await mergeAllRuntimeHooks(repoRoot)
   const conflicts = hookResults.filter((r) => r.conflict)

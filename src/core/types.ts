@@ -36,6 +36,7 @@ export type AdrConfig = {
     language: 'ja' | 'en'
     idDigits: number
     allowAcceptedClarifications: boolean
+    legacyFrontmatter?: boolean
   }
   hooks: {
     enabled: boolean

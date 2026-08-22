@@ -58,7 +58,21 @@ async function main(): Promise<void> {
           await copySkillAndBundles(PACKAGE_ROOT, root, p)
         })
         const result = await runCheck(repoRoot)
-        console.log(JSON.stringify({ applied: true, check: result }, null, 2))
+        console.log(
+          JSON.stringify(
+            {
+              applied: true,
+              check: result,
+              nextSteps: [
+                'Review merged hook entries in .cursor/hooks.json (and other runtime settings).',
+                'If Cursor prompts about untrusted project hooks, approve adr-governance hooks in Cursor settings.',
+                'Run: node .adr-governance/bin/cli.mjs check --base origin/main',
+              ],
+            },
+            null,
+            2,
+          ),
+        )
         process.exit(result.exitCode)
       }
       const outDir = defaultInitOutputDir(repoRoot)

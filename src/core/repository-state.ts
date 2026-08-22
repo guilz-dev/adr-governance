@@ -61,8 +61,8 @@ export async function readConfig(repoRoot: string): Promise<{ raw: string; path:
 
 export function isPathInsideRepo(repoRoot: string, targetPath: string): boolean {
   const resolved = path.resolve(repoRoot, targetPath)
-  const relative = path.relative(repoRoot, resolved)
-  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)
+  const relative = path.relative(path.resolve(repoRoot), resolved)
+  return !relative.startsWith('..') && !path.isAbsolute(relative)
 }
 
 export async function fileHashIfExists(filePath: string): Promise<string | null> {

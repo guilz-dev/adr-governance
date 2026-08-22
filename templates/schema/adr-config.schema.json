@@ -27,7 +27,8 @@
       "properties": {
         "language": { "enum": ["ja", "en"] },
         "idDigits": { "type": "integer", "minimum": 3, "maximum": 6 },
-        "allowAcceptedClarifications": { "type": "boolean" }
+        "allowAcceptedClarifications": { "type": "boolean" },
+        "legacyFrontmatter": { "type": "boolean" }
       }
     },
     "hooks": {

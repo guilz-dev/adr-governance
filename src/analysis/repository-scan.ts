@@ -108,7 +108,8 @@ export async function buildEvidenceBundle(
       file.includes('schema') ||
       file.includes('migration') ||
       file.includes('wrangler') ||
-      file.includes('.github/workflows')
+      file.includes('.github/workflows') ||
+      /\d{4}-.+\.md$/.test(file)
     ) {
       try {
         const content = await readFile(abs, 'utf8')

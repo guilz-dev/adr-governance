@@ -5,9 +5,16 @@ import os from 'node:os'
 
 import { defaultConfig, configForSingleDir, parseConfig } from '../../core/config.js'
 import { buildEvidenceBundle, detectExistingLayout } from '../../analysis/repository-scan.js'
+import {
+  detectLegacyFrontmatter,
+  detectDocumentLanguage,
+  detectCiProvider,
+  ciWorkflowSuggestion,
+} from '../../analysis/init-hints.js'
 import type { InitPlan } from '../../core/types.js'
 import { gitLsFiles, gitRevParse } from '../git.js'
 import { sha256 } from '../../core/numbering.js'
+import { validatePlanPaths } from '../../installer/apply-plan.js'
 
 export type InitScanResult = {
   planPath: string
@@ -37,6 +44,22 @@ export async function runInitScan(repoRoot: string, outDir: string): Promise<Ini
     })
   }
 
+  proposedConfig.documents.language = await detectDocumentLanguage(repoRoot)
+  proposedConfig.documents.legacyFrontmatter = await detectLegacyFrontmatter(repoRoot, {
+    acceptedDir: proposedConfig.layout.acceptedDir,
+    proposedDir: proposedConfig.layout.proposedDir,
+  })
+
+  const operations: InitPlan['operations'] = []
+  const ciProvider = detectCiProvider(tracked)
+  if (ciProvider === 'github-actions') {
+    operations.push({
+      kind: 'create',
+      path: '.github/workflows/adr-governance.yml',
+      content: ciWorkflowSuggestion(),
+    })
+  }
+
   await mkdir(outDir, { recursive: true })
   const evidencePath = path.join(outDir, 'evidence.json')
   await writeFile(evidencePath, JSON.stringify(evidence, null, 2))
@@ -49,8 +72,16 @@ export async function runInitScan(repoRoot: string, outDir: string): Promise<Ini
     createdAt: new Date().toISOString(),
     detectedLayout: layout.detectedLayout,
     proposedConfig,
-    operations: [],
-    evidenceReferences: [],
+    operations,
+    evidenceReferences: ciProvider
+      ? [
+          {
+            operationIndex: 0,
+            sourcePaths: ['.github/workflows'],
+            rationale: 'GitHub Actions detected; optional adr-governance check workflow',
+          },
+        ]
+      : [],
   }
 
   const planPath = path.join(outDir, 'init-plan.json')
@@ -86,7 +117,7 @@ export async function applyInitPlan(
   plan: InitPlan,
   applyGenerated: (repoRoot: string, plan: InitPlan) => Promise<void>,
 ): Promise<void> {
-  const errors = validateInitPlan(plan, repoRoot)
+  const errors = [...validateInitPlan(plan, repoRoot), ...(await validatePlanPaths(repoRoot, plan))]
   if (errors.length > 0) {
     throw new Error(errors.join('\n'))
   }

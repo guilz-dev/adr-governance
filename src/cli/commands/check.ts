@@ -12,6 +12,7 @@ import { sha256 } from '../../core/numbering.js'
 import type { ParsedAdr } from '../../core/types.js'
 import type { ValidationIssue } from '../../core/validation.js'
 import { verifyCursorHookEntries } from '../../installer/hook-merge.js'
+import { validateContextLinks } from '../../core/context-links.js'
 
 export type CheckResult = {
   ok: boolean
@@ -30,8 +31,11 @@ export async function runCheck(repoRoot: string, baseRef?: string): Promise<Chec
   }
 
   let config
+  let configWarnings: string[] = []
   try {
-    config = parseConfig(JSON.parse(await readFile(configPath, 'utf8'))).config
+    const parsed = parseConfig(JSON.parse(await readFile(configPath, 'utf8')))
+    config = parsed.config
+    configWarnings = parsed.warnings
   } catch (e) {
     return {
       ok: false,
@@ -59,6 +63,23 @@ export async function runCheck(repoRoot: string, baseRef?: string): Promise<Chec
   }
 
   const issues = collectValidationIssues(adrs, config)
+
+  for (const warning of configWarnings) {
+    issues.push({ severity: 'warning', code: 'unknown-config-key', message: warning })
+  }
+
+  const contextPaths = [config.layout.contextFile, config.layout.contextMapFile]
+  for (const ctxFile of await listContextFiles(repoRoot, contextPaths)) {
+    const linkIssues = await validateContextLinks(repoRoot, [ctxFile])
+    for (const issue of linkIssues) {
+      issues.push({
+        severity: 'error',
+        code: 'broken-context-link',
+        message: issue.message,
+        path: issue.path,
+      })
+    }
+  }
 
   const manifestPath = path.join(repoRoot, MANIFEST_PATH)
   if (existsSync(manifestPath)) {
@@ -117,6 +138,14 @@ export async function runCheck(repoRoot: string, baseRef?: string): Promise<Chec
     exitCode: errors.length > 0 ? 1 : 0,
     issues,
   }
+}
+
+async function listContextFiles(repoRoot: string, candidates: string[]): Promise<string[]> {
+  const paths: string[] = []
+  for (const candidate of candidates) {
+    if (existsSync(path.join(repoRoot, candidate))) paths.push(candidate)
+  }
+  return [...new Set(paths)]
 }
 
 async function checkBaseRefDuplicates(

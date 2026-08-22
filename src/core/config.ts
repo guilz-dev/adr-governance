@@ -19,6 +19,7 @@ export function defaultConfig(overrides: Partial<AdrConfig> = {}): AdrConfig {
       language: 'ja',
       idDigits: 4,
       allowAcceptedClarifications: true,
+      legacyFrontmatter: false,
     },
     hooks: {
       enabled: true,
@@ -110,6 +111,9 @@ export function parseConfig(raw: unknown): { config: AdrConfig; warnings: string
     if (typeof d.idDigits === 'number') config.documents.idDigits = d.idDigits
     if (typeof d.allowAcceptedClarifications === 'boolean') {
       config.documents.allowAcceptedClarifications = d.allowAcceptedClarifications
+    }
+    if (typeof d.legacyFrontmatter === 'boolean') {
+      config.documents.legacyFrontmatter = d.legacyFrontmatter
     }
   }
 

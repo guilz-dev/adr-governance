@@ -13,26 +13,30 @@ export async function buildRepositoryFingerprint(
   repoRoot: string,
   trackedRelativePaths: string[],
 ): Promise<RepositoryFingerprint> {
-  const watchPaths = trackedRelativePaths.filter(isWatchPath).slice(0, MAX_FINGERPRINT_FILES)
+  const watchPaths = trackedRelativePaths.filter(isWatchPath)
+  const truncated = watchPaths.length > MAX_FINGERPRINT_FILES
+  const selected = truncated ? watchPaths.slice(0, MAX_FINGERPRINT_FILES) : watchPaths
   const contentHashes: Record<string, string> = {}
 
-  for (const rel of watchPaths) {
-    const abs = path.join(repoRoot, rel)
-    if (!existsSync(abs)) continue
-    try {
-      const s = await stat(abs)
-      if (!s.isFile()) continue
-      const content = await readFile(abs, 'utf8')
-      contentHashes[rel] = sha256(content)
-    } catch {
-      continue
+  if (!truncated) {
+    for (const rel of selected) {
+      const abs = path.join(repoRoot, rel)
+      if (!existsSync(abs)) continue
+      try {
+        const s = await stat(abs)
+        if (!s.isFile()) continue
+        const content = await readFile(abs, 'utf8')
+        contentHashes[rel] = sha256(content)
+      } catch {
+        continue
+      }
     }
   }
 
   const gitStatusHash = await readGitStatusHash(repoRoot)
 
   return {
-    paths: watchPaths,
+    paths: truncated ? watchPaths : selected,
     gitStatusHash,
     contentHashes,
   }
@@ -54,13 +58,20 @@ export function fingerprintWatchPathsChanged(
   before: RepositoryFingerprint,
   after: RepositoryFingerprint,
 ): boolean {
+  if (before.gitStatusHash !== after.gitStatusHash) return true
+
+  const beforeHasHashes = Object.keys(before.contentHashes).length > 0
+  const afterHasHashes = Object.keys(after.contentHashes).length > 0
+
+  if (!beforeHasHashes || !afterHasHashes) {
+    const allPaths = new Set([...before.paths, ...after.paths])
+    return allPaths.size > 0 && before.paths.join('|') !== after.paths.join('|')
+  }
+
   const allPaths = new Set([...before.paths, ...after.paths])
   for (const p of allPaths) {
     if (!isWatchPath(p)) continue
     if (before.contentHashes[p] !== after.contentHashes[p]) return true
-  }
-  if (before.gitStatusHash !== after.gitStatusHash) {
-    return allPaths.size > 0
   }
   return false
 }
