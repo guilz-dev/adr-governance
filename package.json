@@ -1,0 +1,57 @@
+{
+  "name": "@guilz-dev/adr-governance",
+  "version": "0.1.0",
+  "description": "Multi-runtime ADR governance — Skill, CLI, and hooks for Cursor, Claude Code, Codex CLI, and Gemini CLI.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/guilz-dev/adr-governance.git"
+  },
+  "homepage": "https://github.com/guilz-dev/adr-governance#readme",
+  "bugs": {
+    "url": "https://github.com/guilz-dev/adr-governance/issues"
+  },
+  "keywords": [
+    "adr",
+    "architecture-decision-record",
+    "agent-skills",
+    "hooks",
+    "cursor",
+    "claude-code",
+    "codex",
+    "gemini-cli"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@9.15.9",
+  "bin": {
+    "adr-governance": "./dist/cli/main.js"
+  },
+  "files": [
+    "dist",
+    "skill",
+    "templates",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && node scripts/build-bundles.mjs",
+    "lint": "tsc --noEmit",
+    "test": "pnpm build && vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "jsonc-parser": "3.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.29",
+    "esbuild": "0.25.5",
+    "typescript": "5.7.3",
+    "vitest": "3.2.4"
+  }
+}

@@ -1,0 +1,7 @@
+---
+description: Keep ADR and CONTEXT records aligned with architectural decisions.
+alwaysApply: true
+---
+
+ADR governance is active. When the hook reports possible or likely architectural
+impact, read `.agents/skills/managing-adrs/SKILL.md` completely and follow it.

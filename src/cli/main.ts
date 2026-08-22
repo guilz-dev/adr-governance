@@ -1,0 +1,174 @@
+#!/usr/bin/env node
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import { runInitScan, loadInitPlan, applyInitPlan } from './commands/init.js'
+import { runCheck } from './commands/check.js'
+import { runCreate, runPromote, runSupersede, runTurnClose } from './commands/create.js'
+import { runSync } from './commands/sync.js'
+import { gitRoot } from './git.js'
+import { parseConfig } from '../core/config.js'
+import { defaultConfig } from '../core/config.js'
+import { readFile } from 'node:fs/promises'
+import { copySkillAndBundles } from '../installer/generated-files.js'
+
+const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+
+function usage(): void {
+  console.error(`Usage:
+  adr-governance init [--repo <path>]
+  adr-governance init --apply <plan.json> [--repo <path>]
+  adr-governance check [--base <git-ref>] [--json] [--repo <path>]
+  adr-governance sync --from <release-or-path> [--repo <path>]
+  adr-governance create --status proposed|accepted --title "<title>" --body-file <path> [--repo <path>]
+  adr-governance promote ADR-NNNN [--approval automatic|human] [--repo <path>]
+  adr-governance supersede ADR-NNNN --by ADR-MMMM [--repo <path>]
+  adr-governance turn-close --outcome docs-updated|no-change [--reason <code>] [--repo <path>]`)
+}
+
+function getArg(name: string): string | undefined {
+  const idx = process.argv.indexOf(name)
+  if (idx === -1) return undefined
+  return process.argv[idx + 1]
+}
+
+async function resolveRepo(): Promise<string> {
+  const explicit = getArg('--repo')
+  if (explicit) return path.resolve(explicit)
+  const root = await gitRoot(process.cwd())
+  if (!root) throw new Error('Not a git repository. Use --repo <path>.')
+  return root
+}
+
+async function main(): Promise<void> {
+  const command = process.argv[2]
+  if (!command) {
+    usage()
+    process.exit(2)
+  }
+
+  const repoRoot = await resolveRepo()
+
+  switch (command) {
+    case 'init': {
+      const applyPlan = getArg('--apply')
+      if (applyPlan) {
+        const plan = await loadInitPlan(path.resolve(applyPlan))
+        await applyInitPlan(repoRoot, plan, async (root, p) => {
+          await copySkillAndBundles(PACKAGE_ROOT, root, p)
+        })
+        const result = await runCheck(repoRoot)
+        console.log(JSON.stringify({ applied: true, check: result }, null, 2))
+        process.exit(result.exitCode)
+      }
+      const outDir = path.join(repoRoot, '.adr-governance', 'init-output')
+      const scan = await runInitScan(repoRoot, outDir)
+      console.log(
+        JSON.stringify(
+          {
+            message: 'Init scan complete. Review plan and run init --apply.',
+            planPath: scan.planPath,
+            evidencePath: scan.evidencePath,
+          },
+          null,
+          2,
+        ),
+      )
+      break
+    }
+    case 'check': {
+      const base = getArg('--base')
+      const result = await runCheck(repoRoot, base)
+      if (getArg('--json')) {
+        console.log(JSON.stringify(result, null, 2))
+      } else {
+        for (const issue of result.issues) {
+          console.log(`${issue.severity.toUpperCase()} [${issue.code}] ${issue.message}${issue.path ? ` (${issue.path})` : ''}`)
+        }
+      }
+      process.exit(result.exitCode)
+    }
+    case 'sync': {
+      const from = getArg('--from')
+      const packageRoot = from ? path.resolve(from) : PACKAGE_ROOT
+      const plan = {
+        schemaVersion: 1 as const,
+        planId: 'sync',
+        repositoryRootHash: '',
+        sourceHeadSha: null,
+        createdAt: new Date().toISOString(),
+        detectedLayout: 'split' as const,
+        proposedConfig: defaultConfig(),
+        operations: [],
+        evidenceReferences: [],
+      }
+      const configPath = path.join(repoRoot, 'adr.config.json')
+      try {
+        plan.proposedConfig = parseConfig(JSON.parse(await readFile(configPath, 'utf8'))).config
+      } catch {
+        /* keep default */
+      }
+      await runSync({ packageRoot, repoRoot, plan })
+      console.log('Sync complete.')
+      break
+    }
+    case 'create': {
+      const status = getArg('--status') as 'proposed' | 'accepted'
+      const title = getArg('--title')
+      const bodyFile = getArg('--body-file')
+      if (!status || !title || !bodyFile) throw new Error('Missing create arguments')
+      const config = parseConfig(
+        JSON.parse(await readFile(path.join(repoRoot, 'adr.config.json'), 'utf8')),
+      ).config
+      const body = await readFile(path.resolve(bodyFile), 'utf8')
+      const rel = await runCreate({ repoRoot, config, status, title, body })
+      console.log(`Created ${rel}`)
+      break
+    }
+    case 'promote': {
+      const adrId = process.argv[3]
+      if (!adrId) throw new Error('Missing ADR id')
+      const config = parseConfig(
+        JSON.parse(await readFile(path.join(repoRoot, 'adr.config.json'), 'utf8')),
+      ).config
+      const rel = await runPromote({
+        repoRoot,
+        config,
+        adrId,
+        approval: getArg('--approval') as 'automatic' | 'human' | undefined,
+      })
+      console.log(`Promoted to ${rel}`)
+      break
+    }
+    case 'supersede': {
+      const oldId = process.argv[3]
+      const newId = getArg('--by')
+      if (!oldId || !newId) throw new Error('Usage: supersede ADR-NNNN --by ADR-MMMM')
+      const config = parseConfig(
+        JSON.parse(await readFile(path.join(repoRoot, 'adr.config.json'), 'utf8')),
+      ).config
+      await runSupersede({ repoRoot, config, oldAdrId: oldId, newAdrId: newId })
+      console.log(`Superseded ${oldId} with ${newId}`)
+      break
+    }
+    case 'turn-close': {
+      const outcome = getArg('--outcome') as 'docs-updated' | 'no-change'
+      const reason = getArg('--reason')
+      if (!outcome) throw new Error('Missing --outcome')
+      if (outcome === 'no-change' && !reason) {
+        throw new Error('--reason required for no-change outcome')
+      }
+      await runTurnClose({ repoRoot, outcome, reason })
+      console.log('Turn receipt recorded.')
+      break
+    }
+    default:
+      usage()
+      process.exit(2)
+  }
+}
+
+main().catch((e) => {
+  console.error(String(e))
+  process.exit(2)
+})
