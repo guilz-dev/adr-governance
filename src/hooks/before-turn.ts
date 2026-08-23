@@ -15,6 +15,7 @@ import {
 import { buildHookContext, isAuditFollowUpPrompt } from './common.js'
 import type { TurnState } from '../core/types.js'
 import { buildRepositoryFingerprint } from '../core/fingerprint.js'
+import { pruneOldState } from '../core/locks.js'
 import { gitLsFiles } from '../cli/git.js'
 import {
   loadAuditChainForScope,
@@ -54,6 +55,8 @@ export async function runBeforeTurn(input: BeforeTurnInput): Promise<BeforeTurnR
   }
 
   if (!config.hooks.enabled) return { ok: true }
+
+  await pruneOldState(repoRoot).catch(() => undefined)
 
   const conversationId =
     input.conversationId?.trim() ||

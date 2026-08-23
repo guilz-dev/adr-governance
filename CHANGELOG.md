@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.10] - 2026-08-23
+
+### Changed
+
+- after-turn: follow-up only for `likely` risk or audit follow-up turns without receipt (not `possible` / watch-path-only changes)
+- after-turn: silently record `turn-close` receipt for `none` / `possible` risk turns (no user-visible follow-up turn)
+
 ## [0.1.9] - 2026-08-23
 
 ### Fixed
@@ -15,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - audit chain: clear on docs update, new user turn, and turn-close (not only manual no-ADR receipt)
 - follow-up detection: exact audit message match only (avoid user-pasted prompt false positives)
 - audit chain: pending scope when runtime omits stable conversation/session id (no generation_id fallback)
+- runtime payload identity: contract fixtures for Claude Code, Codex, and Gemini CLI
+- audit chain: hashed `transcript_path` fallback before repository-wide pending scope
+- turn-close fallback: avoid matching another conversation through a colliding session id
+- state retention: prune stale files inside active state directories
 - Skill: prefer `conversation_id` for `turn-close --session-id`
 
 ### Added

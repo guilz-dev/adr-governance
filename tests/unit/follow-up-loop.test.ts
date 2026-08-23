@@ -6,6 +6,7 @@ import path from 'node:path'
 import {
   resolveHookConversationKey,
   resolveHookConversationKeyOptional,
+  pendingConversationScopeWarning,
 } from '../../src/hooks/resolve-hook-session-id.js'
 import {
   AUDIT_FOLLOWUP_MESSAGE,
@@ -22,7 +23,10 @@ import {
   loadAuditChain,
   loadAuditChainForScope,
 } from '../../src/hooks/audit-chain.js'
-import { loadTurnStateForSession } from '../../src/hooks/turn-pointer.js'
+import {
+  findLatestUnreceiptedTurnForConversation,
+  loadTurnStateForSession,
+} from '../../src/hooks/turn-pointer.js'
 
 function baseTurnState(overrides: Partial<TurnState> = {}): TurnState {
   return {
@@ -63,22 +67,53 @@ describe('resolveHookConversationKey', () => {
   it('returns undefined optional when no stable conversation key exists', () => {
     expect(resolveHookConversationKeyOptional({})).toBeUndefined()
   })
+
+  it('uses a hashed transcript path when runtime ids are missing', () => {
+    expect(
+      resolveHookConversationKeyOptional({ transcript_path: '/tmp/session.jsonl' }),
+    ).toBe('transcript-29e67821bedc391a811d7fd8fcdf12be11edd17dc6c6340415bce3c46c72fd28')
+  })
+
+  it('warns only when the hook payload has no stable conversation scope', () => {
+    expect(pendingConversationScopeWarning({ generation_id: 'gen-only' })).toContain(
+      'repository-wide pending audit scope',
+    )
+    expect(pendingConversationScopeWarning({ session_id: 'session-1' })).toBeUndefined()
+    expect(
+      pendingConversationScopeWarning({ transcript_path: '/tmp/session.jsonl' }),
+    ).toBeUndefined()
+  })
 })
 
 describe('decideAfterTurn conversation follow-up limit', () => {
   const config = defaultConfig()
 
   it('blocks follow-up when conversation chain already reached maxFollowUps', () => {
-    const decision = decideAfterTurn(baseTurnState(), false, false, config, 1)
+    const decision = decideAfterTurn(baseTurnState({ risk: 'likely' }), false, config, 1)
     expect(decision.allowFinish).toBe(true)
     expect(decision.warning).toContain('follow-up limit')
     expect(decision.followUpMessage).toBeUndefined()
+    expect(decision.silentCloseReason).toBe('reversible')
   })
 
-  it('allows first follow-up when conversation chain is empty', () => {
-    const decision = decideAfterTurn(baseTurnState(), false, false, config, 0)
+  it('allows first follow-up for likely-risk turns when conversation chain is empty', () => {
+    const decision = decideAfterTurn(baseTurnState({ risk: 'likely' }), false, config, 0)
     expect(decision.allowFinish).toBe(false)
     expect(decision.followUpMessage).toBe(AUDIT_FOLLOWUP_MESSAGE)
+  })
+
+  it('silently closes possible-risk turns without follow-up', () => {
+    const decision = decideAfterTurn(baseTurnState({ risk: 'possible' }), false, config, 0)
+    expect(decision.allowFinish).toBe(true)
+    expect(decision.silentCloseReason).toBe('reversible')
+    expect(decision.followUpMessage).toBeUndefined()
+  })
+
+  it('silently closes none-risk turns without follow-up', () => {
+    const decision = decideAfterTurn(baseTurnState({ risk: 'none' }), false, config, 0)
+    expect(decision.allowFinish).toBe(true)
+    expect(decision.silentCloseReason).toBe('implementation-detail')
+    expect(decision.followUpMessage).toBeUndefined()
   })
 })
 
@@ -109,6 +144,33 @@ async function setupRepo(prefix: string): Promise<string> {
   await writeFile(path.join(repo, '.adr-governance/manifest.json'), '{}\n')
   return repo
 }
+
+describe('silent turn-close for low-risk turns', () => {
+  it('records receipt without follow-up for possible-risk turns', async () => {
+    const repo = await setupRepo('adr-silent-close-')
+    const conversationId = 'conv-silent'
+    const gen1 = 'gen-silent-1'
+
+    await runBeforeTurn({
+      cwd: repo,
+      prompt: 'Update the authentication label to ライム',
+      sessionId: gen1,
+      conversationId,
+    })
+
+    const stateAfterBefore = await loadTurnStateForSession(repo, gen1)
+    expect(stateAfterBefore?.risk).toBe('possible')
+
+    const after = await runAfterTurn({ cwd: repo, sessionId: gen1, conversationId })
+    expect(after.followUpMessage).toBeUndefined()
+    expect(after.allowFinish).toBe(true)
+
+    const stateAfter = await loadTurnStateForSession(repo, gen1)
+    expect(stateAfter?.receipt?.outcome).toBe('no-change')
+    expect(stateAfter?.receipt?.reason).toBe('reversible')
+    expect(await loadAuditChain(repo, conversationId)).toBeNull()
+  })
+})
 
 describe('follow-up loop regression', () => {
   it('does not re-audit on generation-2 when conversation follow-up already fired', async () => {
@@ -188,6 +250,35 @@ describe('follow-up loop regression', () => {
 })
 
 describe('turn-close conversation resolution', () => {
+  it('does not match another conversation whose session id equals the requested conversation', async () => {
+    const repo = await setupRepo('adr-turn-close-collision-')
+    const turnsDir = path.join(repo, '.adr-governance/state/turns')
+    await mkdir(turnsDir, { recursive: true })
+
+    const legacyMatch = baseTurnState({
+      turnId: 'legacy-match',
+      sessionId: 'conv-target',
+      createdAt: '2026-08-23T00:00:00.000Z',
+    })
+    const collidingNewState = baseTurnState({
+      turnId: 'colliding-new-state',
+      sessionId: 'conv-target',
+      conversationId: 'conv-other',
+      createdAt: '2026-08-23T01:00:00.000Z',
+    })
+    await writeFile(
+      path.join(turnsDir, `${legacyMatch.turnId}.json`),
+      JSON.stringify(legacyMatch, null, 2),
+    )
+    await writeFile(
+      path.join(turnsDir, `${collidingNewState.turnId}.json`),
+      JSON.stringify(collidingNewState, null, 2),
+    )
+
+    const resolved = await findLatestUnreceiptedTurnForConversation(repo, 'conv-target')
+    expect(resolved?.turnId).toBe('legacy-match')
+  })
+
   it('records receipt via conversation_id when generation pointer differs', async () => {
     const repo = await setupRepo('adr-turn-close-conv-')
 
@@ -263,7 +354,8 @@ describe('audit chain lifecycle', () => {
 
     await runBeforeTurn({
       cwd: repo,
-      prompt: 'Another architecture question about auth boundaries',
+      prompt:
+        'We need a new database migration for auth architecture with deployment infrastructure trade-offs',
       sessionId: gen2,
       conversationId,
     })

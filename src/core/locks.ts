@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, open, readFile, readdir, rm, lstat, unlink, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 
@@ -83,10 +83,21 @@ export async function pruneOldState(repoRoot: string, maxAgeDays = 7): Promise<v
   const entries = await readdir(stateDir, { withFileTypes: true })
   for (const entry of entries) {
     if (entry.name === 'locks') continue
-    const full = path.join(stateDir, entry.name)
-    const s = await stat(full)
-    if (s.mtimeMs < cutoff) {
-      await rm(full, { recursive: true, force: true })
+    await pruneStateEntry(path.join(stateDir, entry.name), cutoff)
+  }
+}
+
+async function pruneStateEntry(entryPath: string, cutoff: number): Promise<void> {
+  const entryStat = await lstat(entryPath)
+  if (entryStat.isDirectory()) {
+    const children = await readdir(entryPath)
+    for (const child of children) {
+      await pruneStateEntry(path.join(entryPath, child), cutoff)
     }
+    return
+  }
+
+  if (entryStat.mtimeMs < cutoff) {
+    await rm(entryPath, { force: true })
   }
 }

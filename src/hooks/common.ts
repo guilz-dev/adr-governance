@@ -1,4 +1,4 @@
-import type { AdrConfig, RiskLevel, TurnState } from '../core/types.js'
+import type { AdrConfig, NoAdrReason, RiskLevel, TurnState } from '../core/types.js'
 
 export type HookContext = {
   risk: RiskLevel
@@ -62,6 +62,8 @@ export type AfterTurnDecision = {
   allowFinish: boolean
   followUpMessage?: string
   warning?: string
+  /** Hook-recorded no-change receipt when audit follow-up would be poor UX. */
+  silentCloseReason?: NoAdrReason
 }
 
 export const AUDIT_FOLLOWUP_MESSAGE =
@@ -74,7 +76,6 @@ export function isAuditFollowUpPrompt(prompt: string): boolean {
 export function decideAfterTurn(
   state: TurnState,
   docsUpdated: boolean,
-  watchChanged: boolean,
   config: AdrConfig,
   conversationFollowUpCount = 0,
 ): AfterTurnDecision {
@@ -82,13 +83,36 @@ export function decideAfterTurn(
     return { allowFinish: true }
   }
 
-  if (state.risk === 'none' && !watchChanged && !state.isAuditFollowUp) {
-    return { allowFinish: true }
+  const effectiveFollowUpCount = Math.max(state.followUpCount, conversationFollowUpCount)
+  const auditEnabled =
+    config.hooks.afterTurnAudit &&
+    effectiveFollowUpCount < config.hooks.maxFollowUps
+
+  if (state.isAuditFollowUp) {
+    if (auditEnabled) {
+      return {
+        allowFinish: false,
+        followUpMessage: AUDIT_FOLLOWUP_MESSAGE,
+      }
+    }
+    return {
+      allowFinish: true,
+      warning: 'ADR audit skipped after follow-up limit',
+      silentCloseReason: 'implementation-detail',
+    }
   }
 
-  const effectiveFollowUpCount = Math.max(state.followUpCount, conversationFollowUpCount)
+  // Low-risk turns: record receipt in the hook; no user-visible follow-up turn.
+  if (state.risk === 'none') {
+    return { allowFinish: true, silentCloseReason: 'implementation-detail' }
+  }
 
-  if (effectiveFollowUpCount < config.hooks.maxFollowUps && config.hooks.afterTurnAudit) {
+  if (state.risk === 'possible') {
+    return { allowFinish: true, silentCloseReason: 'reversible' }
+  }
+
+  // likely risk without receipt — one audit follow-up (conversation-scoped limit).
+  if (auditEnabled) {
     return {
       allowFinish: false,
       followUpMessage: AUDIT_FOLLOWUP_MESSAGE,
@@ -98,5 +122,6 @@ export function decideAfterTurn(
   return {
     allowFinish: true,
     warning: 'ADR audit skipped after follow-up limit',
+    silentCloseReason: 'reversible',
   }
 }

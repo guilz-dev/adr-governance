@@ -1,16 +1,12 @@
 import { writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
+import { recordTurnReceiptForState } from '../cli/commands/turn-close.js'
 import { parseConfig } from '../core/config.js'
 import { findRepoRoot, readConfig, STATE_DIR } from '../core/repository-state.js'
 import { decideAfterTurn } from './common.js'
 import { loadCurrentTurnState } from './before-turn.js'
-import {
-  buildRepositoryFingerprint,
-  detectDocsPathsUpdated,
-  fingerprintWatchPathsChanged,
-} from '../core/fingerprint.js'
-import { gitLsFiles } from '../cli/git.js'
+import { detectDocsPathsUpdated } from '../core/fingerprint.js'
 import {
   incrementAuditChainFollowUpForScope,
   loadAuditChainForScope,
@@ -63,20 +59,23 @@ export async function runAfterTurn(input: AfterTurnInput): Promise<AfterTurnResu
 
   const docsUpdated = await detectDocsPathsUpdated(repoRoot, docPaths, state.createdAt)
 
-  const tracked = await gitLsFiles(repoRoot)
-  const afterFingerprint = await buildRepositoryFingerprint(repoRoot, tracked)
-  const watchChanged = fingerprintWatchPathsChanged(state.beforeFingerprint, afterFingerprint)
-
   const decision = decideAfterTurn(
     state,
     docsUpdated,
-    watchChanged,
     config,
     conversationFollowUpCount,
   )
 
   if (docsUpdated || state.receipt !== null) {
     await markAuditChainResolvedForScope(repoRoot, conversationId)
+  }
+
+  if (decision.silentCloseReason && state.receipt === null) {
+    await recordTurnReceiptForState(repoRoot, state, {
+      outcome: 'no-change',
+      reason: decision.silentCloseReason,
+      timestamp: new Date().toISOString(),
+    })
   }
 
   if (!decision.allowFinish && decision.followUpMessage) {

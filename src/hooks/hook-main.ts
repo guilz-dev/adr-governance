@@ -11,11 +11,11 @@ import {
   toGeminiAfterAgent,
 } from './adapters/cursor.js'
 import { findRepoRoot } from '../core/repository-state.js'
-import { pruneOldState } from '../core/locks.js'
 import {
   resolveHookTurnKey,
   resolveHookTurnKeyOptional,
   resolveHookConversationKeyOptional,
+  pendingConversationScopeWarning,
 } from './resolve-hook-session-id.js'
 
 async function readStdinJson(): Promise<Record<string, unknown>> {
@@ -42,9 +42,9 @@ async function main(): Promise<void> {
   const prompt = String(payload.prompt ?? payload.text ?? payload.user_message ?? '')
 
   const repoRoot = resolveRepoRoot(cwd)
-  if (repoRoot && phase === 'session-start') {
-    await pruneOldState(repoRoot).catch(() => undefined)
-  }
+  const conversationId = resolveHookConversationKeyOptional(payload)
+  const scopeWarning = pendingConversationScopeWarning(payload)
+  if (repoRoot && scopeWarning) console.error(scopeWarning)
 
   try {
     if (phase === 'before-turn' || phase === 'session-start') {
@@ -52,7 +52,7 @@ async function main(): Promise<void> {
         cwd,
         prompt,
         sessionId: resolveHookTurnKey(payload),
-        conversationId: resolveHookConversationKeyOptional(payload),
+        conversationId,
         hookPayload: payload,
       })
       const ctx = result.hookContext
@@ -79,7 +79,7 @@ async function main(): Promise<void> {
       const result = await runAfterTurn({
         cwd,
         sessionId: resolveHookTurnKeyOptional(payload),
-        conversationId: resolveHookConversationKeyOptional(payload),
+        conversationId,
       })
       if (runtime === 'cursor') {
         process.stdout.write(JSON.stringify(toCursorStop(result.followUpMessage)))

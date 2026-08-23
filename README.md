@@ -75,6 +75,18 @@ node .adr-governance/bin/cli.mjs turn-close --outcome no-change --reason reversi
 4. Hooks **fail-open**; `check` **fail-closed** for CI.
 5. Prompt/transcript bodies are not persisted (SHA-256 only).
 
+## Runtime hook identity
+
+Claude Code, Codex CLI, and Gemini CLI hook payloads use `session_id` as the stable
+conversation scope. Cursor may provide `conversation_id` plus a per-generation
+`generation_id`; adr-governance prefers the conversation id for audit chains and the
+generation id for turn pointers.
+
+If runtime ids are absent, adr-governance hashes `transcript_path` and uses that digest as
+the conversation scope. If no stable identity is available at all, it falls back to one
+repository-wide pending audit scope and emits a warning. Parallel sessions are not isolated
+in that degraded mode.
+
 ## Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md). Please read [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) before participating.

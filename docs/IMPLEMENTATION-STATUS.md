@@ -2,7 +2,7 @@
 
 Design spec: `docs/superpowers/specs/2026-08-22-adr-governance-design.md` in the [guilz](https://github.com/guilz-dev/guilz) monorepo.
 
-**Current release:** v0.1.9
+**Current release:** v0.1.10
 
 ## Implemented
 
@@ -17,11 +17,19 @@ Design spec: `docs/superpowers/specs/2026-08-22-adr-governance-design.md` in the
 | Hook merge (Cursor / Claude / Codex / Gemini) | Done |
 | after-turn fingerprint + doc path audit | Done |
 | Conversation-scoped audit follow-up limit | Done (v0.1.9) |
+| Silent turn-close for low-risk turns | Done (v0.1.10) |
 | `check`: ADR validation, manifest drift, hook entries, CONTEXT links | Done |
 | `sync` conflict on hand-edited generated files | Done |
 | Human promotion audit log (ndjson) | Done |
 | CI workflow candidate in init plan (GitHub Actions) | Done |
-| Unit + integration + adapter contract tests | Partial (regression tests for fingerprint, base-ref, turn-close, follow-up loop) |
+| Unit + integration + adapter contract tests | Partial (regression tests for fingerprint, base-ref, turn-close, follow-up loop, runtime payload identity) |
+
+## v0.1.10 UX improvements
+
+| Change | Detail |
+|--------|--------|
+| follow-up gating | Only `likely` risk (or audit follow-up without receipt) triggers user-visible follow-up |
+| silent turn-close | `none` / `possible` risk turns auto-record no-change receipt in the hook |
 
 ## v0.1.9 regression fixes
 
@@ -32,7 +40,12 @@ Design spec: `docs/superpowers/specs/2026-08-22-adr-governance-design.md` in the
 | `turn-close` resolution | Resolve by conversation pointer and unreceipted fallback; clear audit chain on receipt |
 | audit chain lifecycle | Clear on docs update, new user turn, and turn-close |
 | follow-up detection | Exact audit message match only |
-| runtime without conversation id | Pending audit chain scope (no generation_id fallback) |
+| runtime without conversation id | Use `session_id`, then hashed `transcript_path`; repository-wide pending scope only when no stable identity exists |
+| stale runtime state | Prune individual state files after seven days, including inside active state directories |
+
+The repository-wide pending scope is a degraded compatibility mode. Parallel sessions are
+not isolated when a runtime supplies no `conversation_id`, `session_id`, or
+`transcript_path`; the hook emits a warning when this occurs.
 
 ## Re-enable hooks on guilz (after sync to v0.1.9+)
 

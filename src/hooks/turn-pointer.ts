@@ -86,7 +86,10 @@ export async function findLatestUnreceiptedTurnForConversation(
         await readFile(path.join(turnsDir, entry), 'utf8'),
       ) as TurnState
       if (state.receipt !== null) continue
-      if (state.conversationId === conversationId || state.sessionId === conversationId) {
+      if (
+        state.conversationId === conversationId ||
+        (state.conversationId === undefined && state.sessionId === conversationId)
+      ) {
         candidates.push(state)
       }
     } catch {
