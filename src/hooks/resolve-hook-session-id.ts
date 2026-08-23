@@ -15,6 +15,20 @@ export function resolveHookTurnKey(payload: Record<string, unknown>): string {
   return resolveHookTurnKeyOptional(payload) ?? randomUUID()
 }
 
+/** Stable conversation key for audit follow-up limits across generations. */
+export function resolveHookConversationKeyOptional(
+  payload: Record<string, unknown>,
+): string | undefined {
+  return readNonEmptyString(
+    payload.conversation_id ?? payload.conversationId ?? payload.session_id ?? payload.sessionId,
+  )
+}
+
+/** Stable conversation key only; never falls back to generation_id. */
+export function resolveHookConversationKey(payload: Record<string, unknown>): string | undefined {
+  return resolveHookConversationKeyOptional(payload)
+}
+
 function readNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
   const trimmed = value.trim()

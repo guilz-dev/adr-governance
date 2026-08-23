@@ -64,25 +64,34 @@ export type AfterTurnDecision = {
   warning?: string
 }
 
+export const AUDIT_FOLLOWUP_MESSAGE =
+  'ADR audit: this turn may have architectural impact but no ADR/CONTEXT update or no-ADR reason was recorded. Read `.agents/skills/managing-adrs/SKILL.md` and either document the decision or record a reason code.'
+
+export function isAuditFollowUpPrompt(prompt: string): boolean {
+  return prompt.trim() === AUDIT_FOLLOWUP_MESSAGE
+}
+
 export function decideAfterTurn(
   state: TurnState,
   docsUpdated: boolean,
   watchChanged: boolean,
   config: AdrConfig,
+  conversationFollowUpCount = 0,
 ): AfterTurnDecision {
   if (docsUpdated || state.receipt !== null) {
     return { allowFinish: true }
   }
 
-  if (state.risk === 'none' && !watchChanged) {
+  if (state.risk === 'none' && !watchChanged && !state.isAuditFollowUp) {
     return { allowFinish: true }
   }
 
-  if (state.followUpCount < config.hooks.maxFollowUps && config.hooks.afterTurnAudit) {
+  const effectiveFollowUpCount = Math.max(state.followUpCount, conversationFollowUpCount)
+
+  if (effectiveFollowUpCount < config.hooks.maxFollowUps && config.hooks.afterTurnAudit) {
     return {
       allowFinish: false,
-      followUpMessage:
-        'ADR audit: this turn may have architectural impact but no ADR/CONTEXT update or no-ADR reason was recorded. Read `.agents/skills/managing-adrs/SKILL.md` and either document the decision or record a reason code.',
+      followUpMessage: AUDIT_FOLLOWUP_MESSAGE,
     }
   }
 

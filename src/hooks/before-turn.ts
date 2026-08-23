@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-import { resolveHookTurnKey } from './resolve-hook-session-id.js'
+import { resolveHookTurnKey, resolveHookConversationKeyOptional } from './resolve-hook-session-id.js'
 
 import { parseConfig } from '../core/config.js'
 import { hashPrompt, assessPromptRisk, rankRelevantAdrs } from '../core/risk-signals.js'
@@ -12,16 +12,21 @@ import {
   readConfig,
   STATE_DIR,
 } from '../core/repository-state.js'
-import { buildHookContext } from './common.js'
+import { buildHookContext, isAuditFollowUpPrompt } from './common.js'
 import type { TurnState } from '../core/types.js'
 import { buildRepositoryFingerprint } from '../core/fingerprint.js'
 import { gitLsFiles } from '../cli/git.js'
+import {
+  loadAuditChainForScope,
+  markAuditChainResolvedForScope,
+} from './audit-chain.js'
 import { loadTurnStateForSession, writeTurnPointer } from './turn-pointer.js'
 
 export type BeforeTurnInput = {
   cwd: string
   prompt: string
   sessionId?: string
+  conversationId?: string
   hookPayload?: Record<string, unknown>
 }
 
@@ -31,6 +36,7 @@ export type BeforeTurnResult = {
   hookContext?: ReturnType<typeof buildHookContext>
   turnStatePath?: string
   sessionId?: string
+  conversationId?: string
 }
 
 export async function runBeforeTurn(input: BeforeTurnInput): Promise<BeforeTurnResult> {
@@ -49,14 +55,30 @@ export async function runBeforeTurn(input: BeforeTurnInput): Promise<BeforeTurnR
 
   if (!config.hooks.enabled) return { ok: true }
 
+  const conversationId =
+    input.conversationId?.trim() ||
+    (input.hookPayload ? resolveHookConversationKeyOptional(input.hookPayload) : undefined)
+
+  const isAuditFollowUp = isAuditFollowUpPrompt(input.prompt)
+
+  if (!isAuditFollowUp) {
+    await markAuditChainResolvedForScope(repoRoot, conversationId)
+  }
+
+  const auditChain = isAuditFollowUp
+    ? await loadAuditChainForScope(repoRoot, conversationId)
+    : null
+
   const adrs = await loadAllAdrs(repoRoot, config)
-  const { risk, signals } = assessPromptRisk(input.prompt, config)
-  const relevant = rankRelevantAdrs(input.prompt, adrs)
+  const assessed = isAuditFollowUp
+    ? { risk: 'none' as const, signals: ['audit-follow-up'] }
+    : assessPromptRisk(input.prompt, config)
+  const relevant = isAuditFollowUp ? [] : rankRelevantAdrs(input.prompt, adrs)
 
   const hookContext = buildHookContext(
     config,
-    risk,
-    signals,
+    assessed.risk,
+    assessed.signals,
     relevant.map((a) => a.path),
   )
 
@@ -75,12 +97,14 @@ export async function runBeforeTurn(input: BeforeTurnInput): Promise<BeforeTurnR
     schemaVersion: 1,
     sessionId,
     turnId,
+    conversationId,
+    isAuditFollowUp: isAuditFollowUp || undefined,
     promptHash: hashPrompt(input.prompt),
-    risk,
-    signals,
+    risk: assessed.risk,
+    signals: assessed.signals,
     beforeFingerprint,
     relevantAdrPaths: relevant.map((a) => a.path),
-    followUpCount: 0,
+    followUpCount: auditChain?.followUpCount ?? 0,
     receipt: null,
     createdAt: new Date().toISOString(),
   }
@@ -91,12 +115,22 @@ export async function runBeforeTurn(input: BeforeTurnInput): Promise<BeforeTurnR
   await writeTurnPointer(repoRoot, sessionId, {
     turnId,
     turnStatePath: path.relative(repoRoot, turnStatePath),
-    risk,
+    risk: assessed.risk,
     fullInstruction: hookContext.fullInstruction,
     updatedAt: turnState.createdAt,
   })
 
-  return { ok: true, hookContext, turnStatePath, sessionId }
+  if (conversationId) {
+    await writeTurnPointer(repoRoot, conversationId, {
+      turnId,
+      turnStatePath: path.relative(repoRoot, turnStatePath),
+      risk: assessed.risk,
+      fullInstruction: hookContext.fullInstruction,
+      updatedAt: turnState.createdAt,
+    })
+  }
+
+  return { ok: true, hookContext, turnStatePath, sessionId, conversationId }
 }
 
 export async function loadCurrentTurnState(

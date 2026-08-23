@@ -4,7 +4,8 @@ import path from 'node:path'
 import { NO_ADR_REASONS } from '../../core/types.js'
 import type { NoAdrReason, TurnReceipt } from '../../core/types.js'
 import { STATE_DIR } from '../../core/repository-state.js'
-import { loadCurrentTurnState } from '../../hooks/before-turn.js'
+import { markAuditChainResolvedForScope } from '../../hooks/audit-chain.js'
+import { resolveTurnStateForClose } from '../../hooks/turn-pointer.js'
 
 export async function runTurnClose(options: {
   repoRoot: string
@@ -27,11 +28,14 @@ export async function runTurnClose(options: {
     timestamp: new Date().toISOString(),
   }
 
-  const state = await loadCurrentTurnState(options.repoRoot, options.sessionId)
+  const state = await resolveTurnStateForClose(options.repoRoot, options.sessionId)
   if (state) {
     state.receipt = receipt
     const statePath = path.join(options.repoRoot, STATE_DIR, 'turns', `${state.turnId}.json`)
     await writeFile(statePath, JSON.stringify(state, null, 2))
+
+    const conversationId = state.conversationId ?? options.sessionId?.trim()
+    await markAuditChainResolvedForScope(options.repoRoot, conversationId)
     return
   }
 

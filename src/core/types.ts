@@ -140,6 +140,8 @@ export type TurnState = {
   schemaVersion: 1
   sessionId: string
   turnId: string
+  conversationId?: string
+  isAuditFollowUp?: boolean
   promptHash: string
   risk: RiskLevel
   signals: string[]

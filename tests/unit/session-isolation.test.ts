@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { resolveHookTurnKey } from '../../src/hooks/resolve-hook-session-id.js'
+import { resolveHookTurnKey, resolveHookConversationKey } from '../../src/hooks/resolve-hook-session-id.js'
 import { loadTurnStateForSession, writeTurnPointer } from '../../src/hooks/turn-pointer.js'
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -18,6 +18,14 @@ describe('resolveHookTurnKey', () => {
 
   it('falls back to conversation_id when generation_id is missing', () => {
     const key = resolveHookTurnKey({
+      conversation_id: 'conv-1',
+    })
+    expect(key).toBe('conv-1')
+  })
+
+  it('uses conversation_id for audit chain even when generation_id is present', () => {
+    const key = resolveHookConversationKey({
+      generation_id: 'gen-1',
       conversation_id: 'conv-1',
     })
     expect(key).toBe('conv-1')

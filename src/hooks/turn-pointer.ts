@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { STATE_DIR } from '../core/repository-state.js'
@@ -46,6 +46,58 @@ export async function loadTurnStateForSession(
   if (fromLegacy) return fromLegacy
 
   return null
+}
+
+export async function resolveTurnStateForClose(
+  repoRoot: string,
+  sessionId?: string,
+): Promise<TurnState | null> {
+  const trimmed = sessionId?.trim()
+  if (!trimmed) {
+    return loadTurnStateForSession(repoRoot)
+  }
+
+  const direct = await loadTurnStateForSession(repoRoot, trimmed)
+  if (direct) return direct
+
+  const byConversation = await findLatestUnreceiptedTurnForConversation(repoRoot, trimmed)
+  if (byConversation) return byConversation
+
+  return null
+}
+
+export async function findLatestUnreceiptedTurnForConversation(
+  repoRoot: string,
+  conversationId: string,
+): Promise<TurnState | null> {
+  const turnsDir = path.join(repoRoot, STATE_DIR, 'turns')
+  let entries: string[]
+  try {
+    entries = await readdir(turnsDir)
+  } catch {
+    return null
+  }
+
+  const candidates: TurnState[] = []
+  for (const entry of entries) {
+    if (!entry.endsWith('.json') || entry.startsWith('receipt-')) continue
+    try {
+      const state = JSON.parse(
+        await readFile(path.join(turnsDir, entry), 'utf8'),
+      ) as TurnState
+      if (state.receipt !== null) continue
+      if (state.conversationId === conversationId || state.sessionId === conversationId) {
+        candidates.push(state)
+      }
+    } catch {
+      continue
+    }
+  }
+
+  if (candidates.length === 0) return null
+
+  candidates.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+  return candidates[0] ?? null
 }
 
 async function readPointerTurnState(repoRoot: string, relPointer: string): Promise<TurnState | null> {

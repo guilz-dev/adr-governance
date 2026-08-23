@@ -2,7 +2,7 @@
 
 Design spec: `docs/superpowers/specs/2026-08-22-adr-governance-design.md` in the [guilz](https://github.com/guilz-dev/guilz) monorepo.
 
-**Current release:** v0.1.8
+**Current release:** v0.1.9
 
 ## Implemented
 
@@ -16,11 +16,31 @@ Design spec: `docs/superpowers/specs/2026-08-22-adr-governance-design.md` in the
 | init plan ops: create / replace-generated / merge-jsonc + hash check | Done |
 | Hook merge (Cursor / Claude / Codex / Gemini) | Done |
 | after-turn fingerprint + doc path audit | Done |
+| Conversation-scoped audit follow-up limit | Done (v0.1.9) |
 | `check`: ADR validation, manifest drift, hook entries, CONTEXT links | Done |
 | `sync` conflict on hand-edited generated files | Done |
 | Human promotion audit log (ndjson) | Done |
 | CI workflow candidate in init plan (GitHub Actions) | Done |
-| Unit + integration + adapter contract tests | Partial (regression tests for fingerprint, base-ref, turn-close) |
+| Unit + integration + adapter contract tests | Partial (regression tests for fingerprint, base-ref, turn-close, follow-up loop) |
+
+## v0.1.9 regression fixes
+
+| Fix | Detail |
+|-----|--------|
+| after-turn infinite loop | Follow-up count tracked per `conversation_id` via audit chain state |
+| audit follow-up turns | Detect audit prompt in `before-turn`; skip risk re-evaluation |
+| `turn-close` resolution | Resolve by conversation pointer and unreceipted fallback; clear audit chain on receipt |
+| audit chain lifecycle | Clear on docs update, new user turn, and turn-close |
+| follow-up detection | Exact audit message match only |
+| runtime without conversation id | Pending audit chain scope (no generation_id fallback) |
+
+## Re-enable hooks on guilz (after sync to v0.1.9+)
+
+1. Sync bundled CLI/hook from this package (`sync --from` or init apply).
+2. Restore `.cursor/hooks.json` entries for `adr-governance.mjs` (`sessionStart`, `beforeSubmitPrompt`, `stop` with `loop_limit: 1`).
+3. Set `adr.config.json` → `hooks.enabled: true`, `afterTurnAudit: true`.
+4. Optionally restore `.cursor/rules/adr-governance.mdc` → `alwaysApply: true`.
+5. Reload Cursor window; verify one follow-up max when `turn-close` is omitted.
 
 ## v0.1.3 regression fixes
 

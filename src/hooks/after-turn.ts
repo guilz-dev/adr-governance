@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises'
+import { writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { parseConfig } from '../core/config.js'
@@ -11,10 +11,16 @@ import {
   fingerprintWatchPathsChanged,
 } from '../core/fingerprint.js'
 import { gitLsFiles } from '../cli/git.js'
+import {
+  incrementAuditChainFollowUpForScope,
+  loadAuditChainForScope,
+  markAuditChainResolvedForScope,
+} from './audit-chain.js'
 
 export type AfterTurnInput = {
   cwd: string
   sessionId?: string
+  conversationId?: string
 }
 
 export type AfterTurnResult = {
@@ -44,6 +50,10 @@ export async function runAfterTurn(input: AfterTurnInput): Promise<AfterTurnResu
   const state = await loadCurrentTurnState(repoRoot, input.sessionId)
   if (!state) return { allowFinish: true }
 
+  const conversationId = input.conversationId ?? state.conversationId
+  const auditChain = await loadAuditChainForScope(repoRoot, conversationId)
+  const conversationFollowUpCount = auditChain?.followUpCount ?? 0
+
   const docPaths = [
     config.layout.acceptedDir,
     config.layout.proposedDir,
@@ -57,13 +67,24 @@ export async function runAfterTurn(input: AfterTurnInput): Promise<AfterTurnResu
   const afterFingerprint = await buildRepositoryFingerprint(repoRoot, tracked)
   const watchChanged = fingerprintWatchPathsChanged(state.beforeFingerprint, afterFingerprint)
 
-  const decision = decideAfterTurn(state, docsUpdated, watchChanged, config)
+  const decision = decideAfterTurn(
+    state,
+    docsUpdated,
+    watchChanged,
+    config,
+    conversationFollowUpCount,
+  )
+
+  if (docsUpdated || state.receipt !== null) {
+    await markAuditChainResolvedForScope(repoRoot, conversationId)
+  }
 
   if (!decision.allowFinish && decision.followUpMessage) {
     state.followUpCount += 1
     const stateDir = path.join(repoRoot, STATE_DIR, 'turns')
     const statePath = path.join(stateDir, `${state.turnId}.json`)
     await writeFile(statePath, JSON.stringify(state, null, 2))
+    await incrementAuditChainFollowUpForScope(repoRoot, conversationId, state.turnId)
   }
 
   return decision

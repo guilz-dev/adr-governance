@@ -29,7 +29,7 @@ Evaluate ADR/CONTEXT on every turn where the hook reports `possible` or `likely`
 node .adr-governance/bin/cli.mjs create --status proposed --title "..." --body-file /tmp/body.md
 node .adr-governance/bin/cli.mjs promote ADR-0007 [--approval automatic|human]
 node .adr-governance/bin/cli.mjs supersede ADR-0002 --by ADR-0008
-node .adr-governance/bin/cli.mjs turn-close --outcome no-change --reason reversible --session-id "<generation_id or conversation_id from hook payload>"
+node .adr-governance/bin/cli.mjs turn-close --outcome no-change --reason reversible --session-id "<conversation_id from hook payload; generation_id also works>"
 node .adr-governance/bin/cli.mjs check
 ```
 

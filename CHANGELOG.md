@@ -5,6 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.9] - 2026-08-23
+
+### Fixed
+
+- after-turn: enforce follow-up limit per conversation via audit chain state (prevents generation-crossing loops)
+- before-turn: detect audit follow-up prompts and skip risk re-evaluation
+- turn-close: resolve turn state by conversation pointer and unreceipted fallback; clear audit chain on receipt
+- audit chain: clear on docs update, new user turn, and turn-close (not only manual no-ADR receipt)
+- follow-up detection: exact audit message match only (avoid user-pasted prompt false positives)
+- audit chain: pending scope when runtime omits stable conversation/session id (no generation_id fallback)
+- Skill: prefer `conversation_id` for `turn-close --session-id`
+
+### Added
+
+- Regression tests for follow-up loop and conversation-scoped `turn-close`
+
 ## [0.1.8] - 2026-08-22
 
 ### Fixed
@@ -104,6 +120,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: Skill, bundled CLI, hooks, init/check/sync/create lifecycle
 
+[0.1.9]: https://github.com/guilz-dev/adr-governance/compare/v0.1.8...v0.1.9
+[0.1.8]: https://github.com/guilz-dev/adr-governance/compare/v0.1.7...v0.1.8
 [0.1.5]: https://github.com/guilz-dev/adr-governance/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/guilz-dev/adr-governance/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/guilz-dev/adr-governance/compare/v0.1.2...v0.1.3
