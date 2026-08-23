@@ -43,7 +43,11 @@ export async function runAfterTurn(input: AfterTurnInput): Promise<AfterTurnResu
     return { allowFinish: true }
   }
 
-  const state = await loadCurrentTurnState(repoRoot, input.sessionId)
+  const state =
+    (await loadCurrentTurnState(repoRoot, input.sessionId)) ??
+    (input.conversationId
+      ? await loadCurrentTurnState(repoRoot, input.conversationId)
+      : null)
   if (!state) return { allowFinish: true }
 
   const conversationId = input.conversationId ?? state.conversationId

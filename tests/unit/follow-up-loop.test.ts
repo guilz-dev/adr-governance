@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { spawn } from 'node:child_process'
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -145,6 +146,35 @@ async function setupRepo(prefix: string): Promise<string> {
   return repo
 }
 
+async function runBundledHook(
+  repo: string,
+  runtime: string,
+  phase: string,
+  payload: object,
+): Promise<Record<string, unknown>> {
+  const hook = path.resolve(import.meta.dirname, '../../dist/bundle/hook.mjs')
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [hook, runtime, phase], {
+      cwd: repo,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    const stdout: Buffer[] = []
+    const stderr: Buffer[] = []
+    child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk))
+    child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk))
+    child.on('error', reject)
+    child.on('exit', (code) => {
+      if (code !== 0) {
+        reject(new Error(`hook exited ${code}: ${Buffer.concat(stderr).toString('utf8')}`))
+        return
+      }
+
+      resolve(JSON.parse(Buffer.concat(stdout).toString('utf8')) as Record<string, unknown>)
+    })
+    child.stdin.end(JSON.stringify(payload))
+  })
+}
+
 describe('silent turn-close for low-risk turns', () => {
   it('records receipt without follow-up for possible-risk turns', async () => {
     const repo = await setupRepo('adr-silent-close-')
@@ -173,6 +203,21 @@ describe('silent turn-close for low-risk turns', () => {
 })
 
 describe('follow-up loop regression', () => {
+  it('audits a turn scoped only by transcript_path', async () => {
+    const repo = await setupRepo('adr-loop-transcript-only-')
+    const hookPayload = {
+      cwd: repo,
+      transcript_path: '/tmp/session.jsonl',
+      prompt: 'We need a new database migration for auth architecture',
+    }
+
+    await runBundledHook(repo, 'claude', 'before-turn', hookPayload)
+    const after = await runBundledHook(repo, 'claude', 'after-turn', hookPayload)
+
+    expect(after.decision).toBe('block')
+    expect(after.reason).toContain('ADR audit')
+  })
+
   it('does not re-audit on generation-2 when conversation follow-up already fired', async () => {
     const repo = await setupRepo('adr-loop-regression-')
     const conversationId = 'conv-loop-test'
