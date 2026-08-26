@@ -107,21 +107,9 @@ export function decideAfterTurn(
     return { allowFinish: true, silentCloseReason: 'implementation-detail' }
   }
 
-  if (state.risk === 'possible') {
+  if (state.risk === 'possible' || state.risk === 'likely') {
     return { allowFinish: true, silentCloseReason: 'reversible' }
   }
 
-  // likely risk without receipt — one audit follow-up (conversation-scoped limit).
-  if (auditEnabled) {
-    return {
-      allowFinish: false,
-      followUpMessage: AUDIT_FOLLOWUP_MESSAGE,
-    }
-  }
-
-  return {
-    allowFinish: true,
-    warning: 'ADR audit skipped after follow-up limit',
-    silentCloseReason: 'reversible',
-  }
+  return { allowFinish: true, silentCloseReason: 'reversible' }
 }

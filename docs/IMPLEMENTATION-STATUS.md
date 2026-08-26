@@ -2,7 +2,7 @@
 
 Design spec: `docs/superpowers/specs/2026-08-22-adr-governance-design.md` in the [guilz](https://github.com/guilz-dev/guilz) monorepo.
 
-**Current release:** v0.1.10
+**Current release:** v0.1.11
 
 ## Implemented
 
@@ -17,12 +17,20 @@ Design spec: `docs/superpowers/specs/2026-08-22-adr-governance-design.md` in the
 | Hook merge (Cursor / Claude / Codex / Gemini) | Done |
 | after-turn fingerprint + doc path audit | Done |
 | Conversation-scoped audit follow-up limit | Done (v0.1.9) |
-| Silent turn-close for low-risk turns | Done (v0.1.10) |
+| Silent turn-close for low-risk turns | Done (v0.1.10, extended to `likely` in v0.1.11) |
 | `check`: ADR validation, manifest drift, hook entries, CONTEXT links | Done |
 | `sync` conflict on hand-edited generated files | Done |
 | Human promotion audit log (ndjson) | Done |
 | CI workflow candidate in init plan (GitHub Actions) | Done |
 | Unit + integration + adapter contract tests | Partial (regression tests for fingerprint, base-ref, turn-close, follow-up loop, runtime payload identity) |
+
+## v0.1.11 UX improvements
+
+| Change | Detail |
+|--------|--------|
+| likely silent close | `likely` risk turns auto-record no-change receipt; no audit follow-up loop |
+| parent receipt propagation | In-flight audit follow-up closes also receipt the parent turn |
+| Skill contract | `turn-close` must run in shell; agent prose is insufficient |
 
 ## v0.1.10 UX improvements
 

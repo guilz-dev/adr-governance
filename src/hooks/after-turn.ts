@@ -6,6 +6,7 @@ import { parseConfig } from '../core/config.js'
 import { findRepoRoot, readConfig, STATE_DIR } from '../core/repository-state.js'
 import { decideAfterTurn } from './common.js'
 import { loadCurrentTurnState } from './before-turn.js'
+import { loadTurnStateByTurnId } from './turn-pointer.js'
 import { detectDocsPathsUpdated } from '../core/fingerprint.js'
 import {
   incrementAuditChainFollowUpForScope,
@@ -75,11 +76,19 @@ export async function runAfterTurn(input: AfterTurnInput): Promise<AfterTurnResu
   }
 
   if (decision.silentCloseReason && state.receipt === null) {
-    await recordTurnReceiptForState(repoRoot, state, {
-      outcome: 'no-change',
+    const receipt = {
+      outcome: 'no-change' as const,
       reason: decision.silentCloseReason,
       timestamp: new Date().toISOString(),
-    })
+    }
+    await recordTurnReceiptForState(repoRoot, state, receipt)
+
+    if (state.isAuditFollowUp && auditChain?.lastTurnId && auditChain.lastTurnId !== state.turnId) {
+      const parentState = await loadTurnStateByTurnId(repoRoot, auditChain.lastTurnId)
+      if (parentState && parentState.receipt === null) {
+        await recordTurnReceiptForState(repoRoot, parentState, receipt)
+      }
+    }
   }
 
   if (!decision.allowFinish && decision.followUpMessage) {

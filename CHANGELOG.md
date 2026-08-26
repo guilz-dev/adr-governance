@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.11] - 2026-08-26
+
+### Changed
+
+- after-turn: silently record `turn-close` receipt for `likely` risk turns (no user-visible audit follow-up)
+- Skill: require executing `turn-close` via shell; prose mentions are not receipts
+
+### Fixed
+
+- after-turn: when an in-flight audit follow-up closes, propagate the receipt to the parent turn via audit chain `lastTurnId`
+
 ## [0.1.10] - 2026-08-23
 
 ### Changed
