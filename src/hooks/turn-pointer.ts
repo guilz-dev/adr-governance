@@ -66,6 +66,19 @@ export async function resolveTurnStateForClose(
   return null
 }
 
+export async function loadTurnStateByTurnId(
+  repoRoot: string,
+  turnId: string,
+): Promise<TurnState | null> {
+  try {
+    return JSON.parse(
+      await readFile(path.join(repoRoot, STATE_DIR, 'turns', `${turnId}.json`), 'utf8'),
+    ) as TurnState
+  } catch {
+    return null
+  }
+}
+
 export async function findLatestUnreceiptedTurnForConversation(
   repoRoot: string,
   conversationId: string,

@@ -422,6 +422,6 @@ describe('cursor hook wrapper stdin', () => {
     })
 
     const afterParsed = JSON.parse(after) as { followup_message?: string }
-    expect(afterParsed.followup_message).toContain('ADR audit')
+    expect(afterParsed.followup_message).toBeUndefined()
   })
 })

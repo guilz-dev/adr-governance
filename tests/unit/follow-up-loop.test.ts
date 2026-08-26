@@ -20,12 +20,12 @@ import { runBeforeTurn } from '../../src/hooks/before-turn.js'
 import { runAfterTurn } from '../../src/hooks/after-turn.js'
 import { runTurnClose } from '../../src/cli/commands/turn-close.js'
 import {
-  PENDING_AUDIT_CONVERSATION_ID,
   loadAuditChain,
   loadAuditChainForScope,
 } from '../../src/hooks/audit-chain.js'
 import {
   findLatestUnreceiptedTurnForConversation,
+  loadTurnStateByTurnId,
   loadTurnStateForSession,
 } from '../../src/hooks/turn-pointer.js'
 
@@ -89,18 +89,18 @@ describe('resolveHookConversationKey', () => {
 describe('decideAfterTurn conversation follow-up limit', () => {
   const config = defaultConfig()
 
-  it('blocks follow-up when conversation chain already reached maxFollowUps', () => {
+  it('silently closes likely-risk turns even when conversation chain has prior follow-ups', () => {
     const decision = decideAfterTurn(baseTurnState({ risk: 'likely' }), false, config, 1)
     expect(decision.allowFinish).toBe(true)
-    expect(decision.warning).toContain('follow-up limit')
     expect(decision.followUpMessage).toBeUndefined()
     expect(decision.silentCloseReason).toBe('reversible')
   })
 
-  it('allows first follow-up for likely-risk turns when conversation chain is empty', () => {
+  it('silently closes likely-risk turns without follow-up', () => {
     const decision = decideAfterTurn(baseTurnState({ risk: 'likely' }), false, config, 0)
-    expect(decision.allowFinish).toBe(false)
-    expect(decision.followUpMessage).toBe(AUDIT_FOLLOWUP_MESSAGE)
+    expect(decision.allowFinish).toBe(true)
+    expect(decision.silentCloseReason).toBe('reversible')
+    expect(decision.followUpMessage).toBeUndefined()
   })
 
   it('silently closes possible-risk turns without follow-up', () => {
@@ -200,10 +200,35 @@ describe('silent turn-close for low-risk turns', () => {
     expect(stateAfter?.receipt?.reason).toBe('reversible')
     expect(await loadAuditChain(repo, conversationId)).toBeNull()
   })
+
+  it('records receipt without follow-up for likely-risk turns', async () => {
+    const repo = await setupRepo('adr-silent-close-likely-')
+    const conversationId = 'conv-likely-silent'
+    const gen1 = 'gen-likely-silent-1'
+
+    await runBeforeTurn({
+      cwd: repo,
+      prompt: 'We need a new database migration for auth architecture',
+      sessionId: gen1,
+      conversationId,
+    })
+
+    const stateAfterBefore = await loadTurnStateForSession(repo, gen1)
+    expect(stateAfterBefore?.risk).toBe('likely')
+
+    const after = await runAfterTurn({ cwd: repo, sessionId: gen1, conversationId })
+    expect(after.followUpMessage).toBeUndefined()
+    expect(after.allowFinish).toBe(true)
+
+    const stateAfter = await loadTurnStateForSession(repo, gen1)
+    expect(stateAfter?.receipt?.outcome).toBe('no-change')
+    expect(stateAfter?.receipt?.reason).toBe('reversible')
+    expect(await loadAuditChain(repo, conversationId)).toBeNull()
+  })
 })
 
 describe('follow-up loop regression', () => {
-  it('audits a turn scoped only by transcript_path', async () => {
+  it('silently closes architecture turns scoped only by transcript_path', async () => {
     const repo = await setupRepo('adr-loop-transcript-only-')
     const hookPayload = {
       cwd: repo,
@@ -214,15 +239,15 @@ describe('follow-up loop regression', () => {
     await runBundledHook(repo, 'claude', 'before-turn', hookPayload)
     const after = await runBundledHook(repo, 'claude', 'after-turn', hookPayload)
 
-    expect(after.decision).toBe('block')
-    expect(after.reason).toContain('ADR audit')
+    expect(after.decision).toBeUndefined()
+    expect(after.reason).toBeUndefined()
   })
 
-  it('does not re-audit on generation-2 when conversation follow-up already fired', async () => {
-    const repo = await setupRepo('adr-loop-regression-')
-    const conversationId = 'conv-loop-test'
-    const gen1 = 'gen-loop-1'
-    const gen2 = 'gen-loop-2'
+  it('propagates receipt to parent turn when audit follow-up closes', async () => {
+    const repo = await setupRepo('adr-loop-parent-receipt-')
+    const conversationId = 'conv-parent-receipt'
+    const gen1 = 'gen-parent-1'
+    const gen2 = 'gen-parent-2'
 
     await runBeforeTurn({
       cwd: repo,
@@ -231,15 +256,8 @@ describe('follow-up loop regression', () => {
       conversationId,
     })
 
-    const afterGen1 = await runAfterTurn({
-      cwd: repo,
-      sessionId: gen1,
-      conversationId,
-    })
-    expect(afterGen1.followUpMessage).toContain('ADR audit')
-
-    const chainAfterGen1 = await loadAuditChain(repo, conversationId)
-    expect(chainAfterGen1?.followUpCount).toBe(1)
+    const parentState = await loadTurnStateForSession(repo, gen1)
+    expect(parentState?.turnId).toBeTruthy()
 
     await runBeforeTurn({
       cwd: repo,
@@ -248,9 +266,31 @@ describe('follow-up loop regression', () => {
       conversationId,
     })
 
-    const gen2State = await loadTurnStateForSession(repo, gen2)
-    expect(gen2State?.isAuditFollowUp).toBe(true)
-    expect(gen2State?.risk).toBe('none')
+    const followUpState = await loadTurnStateForSession(repo, gen2)
+    expect(followUpState?.isAuditFollowUp).toBe(true)
+
+    const turnsDir = path.join(repo, '.adr-governance/state/turns')
+    const auditChainDir = path.join(repo, '.adr-governance/state/audit-chain')
+    await mkdir(auditChainDir, { recursive: true })
+    await writeFile(
+      path.join(turnsDir, `${followUpState!.turnId}.json`),
+      JSON.stringify({ ...followUpState, followUpCount: 1 }, null, 2),
+    )
+    await writeFile(
+      path.join(repo, '.adr-governance/state/audit-chain', `${conversationId}.json`),
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          conversationId,
+          followUpCount: 1,
+          updatedAt: new Date().toISOString(),
+          lastTurnId: parentState!.turnId,
+          pendingAudit: true,
+        },
+        null,
+        2,
+      ),
+    )
 
     const afterGen2 = await runAfterTurn({
       cwd: repo,
@@ -259,12 +299,16 @@ describe('follow-up loop regression', () => {
     })
     expect(afterGen2.followUpMessage).toBeUndefined()
     expect(afterGen2.allowFinish).toBe(true)
+
+    const closedParent = await loadTurnStateByTurnId(repo, parentState!.turnId)
+    expect(closedParent?.receipt?.outcome).toBe('no-change')
+    expect(closedParent?.receipt?.reason).toBe('reversible')
   })
 
-  it('does not re-audit on generation-2 when only generation_id is available', async () => {
-    const repo = await setupRepo('adr-loop-generation-only-')
-    const gen1 = 'gen-only-1'
-    const gen2 = 'gen-only-2'
+  it('propagates receipt to parent turn for pending audit scope', async () => {
+    const repo = await setupRepo('adr-loop-pending-parent-')
+    const gen1 = 'gen-pending-parent-1'
+    const gen2 = 'gen-pending-parent-2'
 
     await runBeforeTurn({
       cwd: repo,
@@ -272,11 +316,8 @@ describe('follow-up loop regression', () => {
       sessionId: gen1,
     })
 
-    const afterGen1 = await runAfterTurn({ cwd: repo, sessionId: gen1 })
-    expect(afterGen1.followUpMessage).toContain('ADR audit')
-
-    const pendingChain = await loadAuditChain(repo, PENDING_AUDIT_CONVERSATION_ID)
-    expect(pendingChain?.followUpCount).toBe(1)
+    const parentState = await loadTurnStateForSession(repo, gen1)
+    expect(parentState?.turnId).toBeTruthy()
 
     await runBeforeTurn({
       cwd: repo,
@@ -284,13 +325,33 @@ describe('follow-up loop regression', () => {
       sessionId: gen2,
     })
 
-    const gen2State = await loadTurnStateForSession(repo, gen2)
-    expect(gen2State?.isAuditFollowUp).toBe(true)
-    expect(gen2State?.conversationId).toBeUndefined()
+    const followUpState = await loadTurnStateForSession(repo, gen2)
+    expect(followUpState?.isAuditFollowUp).toBe(true)
+
+    const auditChainDir = path.join(repo, '.adr-governance/state/audit-chain')
+    await mkdir(auditChainDir, { recursive: true })
+    await writeFile(
+      path.join(auditChainDir, '__pending__.json'),
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          conversationId: '__pending__',
+          followUpCount: 1,
+          updatedAt: new Date().toISOString(),
+          lastTurnId: parentState!.turnId,
+          pendingAudit: true,
+        },
+        null,
+        2,
+      ),
+    )
 
     const afterGen2 = await runAfterTurn({ cwd: repo, sessionId: gen2 })
     expect(afterGen2.followUpMessage).toBeUndefined()
-    expect(afterGen2.allowFinish).toBe(true)
+
+    const closedParent = await loadTurnStateByTurnId(repo, parentState!.turnId)
+    expect(closedParent?.receipt?.outcome).toBe('no-change')
+    expect(closedParent?.receipt?.reason).toBe('reversible')
   })
 })
 
@@ -364,11 +425,24 @@ describe('turn-close conversation resolution', () => {
       conversationId,
     })
 
-    await runAfterTurn({
-      cwd: repo,
-      sessionId: generationId,
-      conversationId,
-    })
+    const parentState = await loadTurnStateForSession(repo, generationId)
+    const auditChainDir = path.join(repo, '.adr-governance/state/audit-chain')
+    await mkdir(auditChainDir, { recursive: true })
+    await writeFile(
+      path.join(repo, '.adr-governance/state/audit-chain', `${conversationId}.json`),
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          conversationId,
+          followUpCount: 1,
+          updatedAt: new Date().toISOString(),
+          lastTurnId: parentState!.turnId,
+          pendingAudit: true,
+        },
+        null,
+        2,
+      ),
+    )
     expect(await loadAuditChain(repo, conversationId)).not.toBeNull()
 
     await runTurnClose({
@@ -395,7 +469,7 @@ describe('audit chain lifecycle', () => {
       conversationId,
     })
     await runAfterTurn({ cwd: repo, sessionId: gen1, conversationId })
-    expect((await loadAuditChain(repo, conversationId))?.followUpCount).toBe(1)
+    expect(await loadAuditChain(repo, conversationId)).toBeNull()
 
     await runBeforeTurn({
       cwd: repo,
@@ -405,11 +479,9 @@ describe('audit chain lifecycle', () => {
       conversationId,
     })
 
-    expect(await loadAuditChain(repo, conversationId)).toBeNull()
-
     const afterGen2 = await runAfterTurn({ cwd: repo, sessionId: gen2, conversationId })
-    expect(afterGen2.followUpMessage).toContain('ADR audit')
-    expect((await loadAuditChain(repo, conversationId))?.followUpCount).toBe(1)
+    expect(afterGen2.followUpMessage).toBeUndefined()
+    expect(await loadAuditChain(repo, conversationId)).toBeNull()
   })
 
   it('clears pending chain when a new user turn starts without conversation_id', async () => {
@@ -423,9 +495,7 @@ describe('audit chain lifecycle', () => {
       sessionId: gen1,
     })
     await runAfterTurn({ cwd: repo, sessionId: gen1 })
-    expect(
-      (await loadAuditChainForScope(repo, undefined))?.conversationId,
-    ).toBe(PENDING_AUDIT_CONVERSATION_ID)
+    expect(await loadAuditChainForScope(repo, undefined)).toBeNull()
 
     await runBeforeTurn({
       cwd: repo,

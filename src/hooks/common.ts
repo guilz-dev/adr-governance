@@ -34,7 +34,8 @@ export function buildFullInstruction(config: AdrConfig, relevantAdrPaths: string
     'Relevant ADRs:',
     paths,
     '',
-    'Before finishing the turn, either update ADR/CONTEXT or record a no-ADR reason via turn-close.',
+    'When the hook silent-closes the turn, no manual turn-close is required.',
+    'Otherwise update ADR/CONTEXT or record a no-ADR reason via turn-close before the turn ends.',
   ].join('\n')
 }
 
@@ -107,21 +108,9 @@ export function decideAfterTurn(
     return { allowFinish: true, silentCloseReason: 'implementation-detail' }
   }
 
-  if (state.risk === 'possible') {
+  if (state.risk === 'possible' || state.risk === 'likely') {
     return { allowFinish: true, silentCloseReason: 'reversible' }
   }
 
-  // likely risk without receipt — one audit follow-up (conversation-scoped limit).
-  if (auditEnabled) {
-    return {
-      allowFinish: false,
-      followUpMessage: AUDIT_FOLLOWUP_MESSAGE,
-    }
-  }
-
-  return {
-    allowFinish: true,
-    warning: 'ADR audit skipped after follow-up limit',
-    silentCloseReason: 'reversible',
-  }
+  return { allowFinish: true }
 }

@@ -21,7 +21,7 @@ Evaluate ADR/CONTEXT on every turn where the hook reports `possible` or `likely`
 6. Choose status:
    - Unresolved, unknown rationale, or Open Points → **proposed** in `docs/proposed-adr/`
    - Decision firm and criteria met → **accepted** (or promote proposed) unless `promotion.requireHumanAcceptance` is true without explicit human approval
-7. Record a no-ADR reason when skipping: `no-decision`, `reversible`, `obvious`, `no-tradeoff`, `implementation-detail`, `already-recorded`.
+7. Record a no-ADR reason when skipping: `no-decision`, `reversible`, `obvious`, `no-tradeoff`, `implementation-detail`, `already-recorded`. When the hook asks for a receipt, run `turn-close` in the shell before the turn ends.
 
 ## CLI helpers
 
@@ -32,6 +32,8 @@ node .adr-governance/bin/cli.mjs supersede ADR-0002 --by ADR-0008
 node .adr-governance/bin/cli.mjs turn-close --outcome no-change --reason reversible --session-id "<conversation_id when available; otherwise session_id; generation_id also works for the current turn>"
 node .adr-governance/bin/cli.mjs check
 ```
+
+`turn-close` must be executed as a shell command. Mentioning the command in agent prose is not a receipt.
 
 ## Do not
 
