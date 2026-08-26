@@ -7,14 +7,15 @@ import { execFileSync } from 'node:child_process'
 import { runInitScan, loadInitPlan, applyInitPlan } from '../../src/cli/commands/init.js'
 import { copySkillAndBundles, GENERATOR_VERSION } from '../../src/installer/generated-files.js'
 import { defaultInitOutputDir } from '../../src/cli/commands/init.js'
+import { gitCommit, initTestGitRepo } from '../helpers/git-test-repo.js'
 
 const PACKAGE_ROOT = path.resolve(import.meta.dirname, '../..')
 
 describe('integration init apply', () => {
   it('applies to empty git repo with split layout defaults', async () => {
     const repo = await mkdtemp(path.join(tmpdir(), 'adr-init-int-'))
-    execFileSync('git', ['init', '-b', 'main'], { cwd: repo })
-    execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: repo })
+    initTestGitRepo(repo)
+    gitCommit(repo, 'init', true)
 
     const outDir = defaultInitOutputDir(repo)
     const scan = await runInitScan(repo, outDir, PACKAGE_ROOT)
@@ -40,14 +41,14 @@ describe('integration init apply', () => {
 
   it('detects legacy frontmatter in existing ADR dirs', async () => {
     const repo = await mkdtemp(path.join(tmpdir(), 'adr-legacy-int-'))
-    execFileSync('git', ['init', '-b', 'main'], { cwd: repo })
+    initTestGitRepo(repo)
     await mkdir(path.join(repo, 'docs/adr'), { recursive: true })
     await writeFile(
       path.join(repo, 'docs/adr/0001-old.md'),
       '# Legacy\n\nNo frontmatter here.\n',
     )
     execFileSync('git', ['add', '.'], { cwd: repo })
-    execFileSync('git', ['commit', '-m', 'add legacy adr'], { cwd: repo })
+    gitCommit(repo, 'add legacy adr')
 
     const scan = await runInitScan(repo, defaultInitOutputDir(repo), PACKAGE_ROOT)
     expect(scan.plan.proposedConfig.documents.legacyFrontmatter).toBe(true)
@@ -57,8 +58,8 @@ describe('integration init apply', () => {
 describe('init plan loader', () => {
   it('loads plan json from scan output', async () => {
     const repo = await mkdtemp(path.join(tmpdir(), 'adr-plan-load-'))
-    execFileSync('git', ['init', '-b', 'main'], { cwd: repo })
-    execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: repo })
+    initTestGitRepo(repo)
+    gitCommit(repo, 'init', true)
     const scan = await runInitScan(repo, defaultInitOutputDir(repo), PACKAGE_ROOT)
     const loaded = await loadInitPlan(scan.planPath)
     expect(loaded.planId).toBe(scan.plan.planId)

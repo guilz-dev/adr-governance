@@ -11,10 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - after-turn: silently record `turn-close` receipt for `likely` risk turns (no user-visible audit follow-up)
 - Skill: require executing `turn-close` via shell; prose mentions are not receipts
+- hook instruction: note that silent-closed turns do not require manual `turn-close`
 
 ### Fixed
 
 - after-turn: when an in-flight audit follow-up closes, propagate the receipt to the parent turn via audit chain `lastTurnId`
+- parent receipt propagation uses `reversible` for `likely` / `possible` parent turns
+
+### Notes
+
+- `hooks.maxFollowUps` now applies only to in-flight audit follow-up turns from v0.1.9 and earlier; new `likely` turns no longer emit follow-ups
 
 ## [0.1.10] - 2026-08-23
 

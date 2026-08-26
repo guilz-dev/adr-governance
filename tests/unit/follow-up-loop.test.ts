@@ -302,7 +302,56 @@ describe('follow-up loop regression', () => {
 
     const closedParent = await loadTurnStateByTurnId(repo, parentState!.turnId)
     expect(closedParent?.receipt?.outcome).toBe('no-change')
-    expect(closedParent?.receipt?.reason).toBe('implementation-detail')
+    expect(closedParent?.receipt?.reason).toBe('reversible')
+  })
+
+  it('propagates receipt to parent turn for pending audit scope', async () => {
+    const repo = await setupRepo('adr-loop-pending-parent-')
+    const gen1 = 'gen-pending-parent-1'
+    const gen2 = 'gen-pending-parent-2'
+
+    await runBeforeTurn({
+      cwd: repo,
+      prompt: 'We need a new database migration for auth architecture',
+      sessionId: gen1,
+    })
+
+    const parentState = await loadTurnStateForSession(repo, gen1)
+    expect(parentState?.turnId).toBeTruthy()
+
+    await runBeforeTurn({
+      cwd: repo,
+      prompt: AUDIT_FOLLOWUP_MESSAGE,
+      sessionId: gen2,
+    })
+
+    const followUpState = await loadTurnStateForSession(repo, gen2)
+    expect(followUpState?.isAuditFollowUp).toBe(true)
+
+    const auditChainDir = path.join(repo, '.adr-governance/state/audit-chain')
+    await mkdir(auditChainDir, { recursive: true })
+    await writeFile(
+      path.join(auditChainDir, '__pending__.json'),
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          conversationId: '__pending__',
+          followUpCount: 1,
+          updatedAt: new Date().toISOString(),
+          lastTurnId: parentState!.turnId,
+          pendingAudit: true,
+        },
+        null,
+        2,
+      ),
+    )
+
+    const afterGen2 = await runAfterTurn({ cwd: repo, sessionId: gen2 })
+    expect(afterGen2.followUpMessage).toBeUndefined()
+
+    const closedParent = await loadTurnStateByTurnId(repo, parentState!.turnId)
+    expect(closedParent?.receipt?.outcome).toBe('no-change')
+    expect(closedParent?.receipt?.reason).toBe('reversible')
   })
 })
 

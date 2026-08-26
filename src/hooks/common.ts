@@ -34,7 +34,8 @@ export function buildFullInstruction(config: AdrConfig, relevantAdrPaths: string
     'Relevant ADRs:',
     paths,
     '',
-    'Before finishing the turn, either update ADR/CONTEXT or record a no-ADR reason via turn-close.',
+    'When the hook silent-closes the turn, no manual turn-close is required.',
+    'Otherwise update ADR/CONTEXT or record a no-ADR reason via turn-close before the turn ends.',
   ].join('\n')
 }
 
@@ -111,5 +112,5 @@ export function decideAfterTurn(
     return { allowFinish: true, silentCloseReason: 'reversible' }
   }
 
-  return { allowFinish: true, silentCloseReason: 'reversible' }
+  return { allowFinish: true }
 }

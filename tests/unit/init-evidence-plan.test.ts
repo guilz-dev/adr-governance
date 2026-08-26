@@ -12,14 +12,15 @@ import { watchPathsChanged } from '../../src/core/risk-signals.js'
 import type { EvidenceBundle, RepositoryFingerprint } from '../../src/core/types.js'
 import { loadTurnStateForSession, writeTurnPointer } from '../../src/hooks/turn-pointer.js'
 import type { TurnState } from '../../src/core/types.js'
+import { gitCommit, initTestGitRepo } from '../helpers/git-test-repo.js'
 
 const PACKAGE_ROOT = path.resolve(import.meta.dirname, '../..')
 
 describe('init evidence-informed plan', () => {
   it('does not create duplicate README operations for single layout', async () => {
     const repo = await mkdtemp(path.join(tmpdir(), 'adr-init-single-readme-'))
-    execFileSync('git', ['init', '-b', 'main'], { cwd: repo })
-    execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: repo })
+    initTestGitRepo(repo)
+    gitCommit(repo, 'init', true)
 
     const config = configForSingleDir('docs/decisions')
     const build = await buildInitPlanOperations(PACKAGE_ROOT, repo, config, null)
@@ -32,14 +33,14 @@ describe('init evidence-informed plan', () => {
 
   it('does not force docs/adr/ for custom layout', async () => {
     const repo = await mkdtemp(path.join(tmpdir(), 'adr-init-custom-layout-'))
-    execFileSync('git', ['init', '-b', 'main'], { cwd: repo })
+    initTestGitRepo(repo)
     await mkdir(path.join(repo, 'docs/architecture/decisions'), { recursive: true })
     await writeFile(
       path.join(repo, 'docs/architecture/decisions/0001-existing.md'),
       '# Existing\n',
     )
     execFileSync('git', ['add', '.'], { cwd: repo })
-    execFileSync('git', ['commit', '-m', 'add custom adr dir'], { cwd: repo })
+    gitCommit(repo, 'add custom adr dir')
 
     const config = defaultConfig({
       layout: {
@@ -59,15 +60,15 @@ describe('init evidence-informed plan', () => {
 
   it('does not propose CONTEXT-MAP for a single-context repository', async () => {
     const repo = await mkdtemp(path.join(tmpdir(), 'adr-init-context-map-'))
-    execFileSync('git', ['init', '-b', 'main'], { cwd: repo })
-    execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: repo })
+    initTestGitRepo(repo)
+    gitCommit(repo, 'init', true)
 
     const tracked = ['package.json', 'packages/db/src/schema.ts']
     await writeFile(path.join(repo, 'package.json'), '{"name":"demo"}\n')
     await mkdir(path.join(repo, 'packages/db/src'), { recursive: true })
     await writeFile(path.join(repo, 'packages/db/src/schema.ts'), 'export const users = 1\n')
     execFileSync('git', ['add', '.'], { cwd: repo })
-    execFileSync('git', ['commit', '-m', 'add files'], { cwd: repo })
+    gitCommit(repo, 'add files')
 
     const evidence = await buildEvidenceBundle(repo, tracked, 'HEAD', defaultConfig().analysis.exclude)
     const build = await buildInitPlanOperations(
