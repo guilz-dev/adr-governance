@@ -126,9 +126,11 @@ export async function buildRefDecisionCorpus(
   const { readFileAtRef } = await import('../cli/git-diff.js')
   try {
     const paths = await listRefCorpusPaths(repoRoot, ref, config)
-    return collectCorpusEntries(paths, async (relativePath) =>
+    const entries = await collectCorpusEntries(paths, async (relativePath) =>
       readFileAtRef(repoRoot, ref, relativePath),
     )
+    if (entries.length !== paths.length) throw new BaseRefUnavailableError(ref)
+    return entries
   } catch {
     throw new BaseRefUnavailableError(ref)
   }
