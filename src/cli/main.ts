@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 
 import { runInitScan, loadInitPlan, applyInitPlan, defaultInitOutputDir } from './commands/init.js'
 import { runCheck } from './commands/check.js'
+import { runAttest } from './commands/attest.js'
 import { runCreate } from './commands/create.js'
 import { runPromote } from './commands/promote.js'
 import { runSupersede } from './commands/supersede.js'
@@ -22,12 +23,24 @@ function usage(): void {
   console.error(`Usage:
   adr-governance init [--repo <path>]
   adr-governance init --apply <plan.json> [--from <package-root>] [--repo <path>]
-  adr-governance check [--base <git-ref>] [--json] [--repo <path>]
+  adr-governance check [--base <git-ref>] [--evidence <json-path>] [--github-event <event-path>] [--json] [--repo <path>]
+  adr-governance attest --base <git-ref> (--adr ADR-NNNN ... | --no-adr <reason> --rationale <text>) [--reviewed-proposal ADR-NNNN ...] [--format json|github-markdown] [--repo <path>]
   adr-governance sync [--from <package-root>] [--repo <path>]
   adr-governance create --status proposed|accepted --title "<title>" --body-file <path> [--repo <path>]
   adr-governance promote ADR-NNNN [--approval automatic|human] [--repo <path>]
   adr-governance supersede ADR-NNNN --by ADR-MMMM [--repo <path>]
   adr-governance turn-close --outcome docs-updated|no-change [--reason <code>] [--session-id <id>] [--repo <path>]`)
+}
+
+function getArgs(name: string): string[] {
+  const values: string[] = []
+  for (let i = 0; i < process.argv.length; i++) {
+    if (process.argv[i] === name) {
+      const value = process.argv[i + 1]
+      if (value && !value.startsWith('-')) values.push(value)
+    }
+  }
+  return values
 }
 
 function getArg(name: string): string | undefined {
@@ -45,7 +58,7 @@ function hasFlag(name: string): boolean {
 function firstPositionalAfter(command: string): string | undefined {
   const start = process.argv.indexOf(command)
   if (start === -1) return undefined
-  const skipValueFor = new Set(['--repo', '--from', '--approval', '--by', '--apply', '--base', '--status', '--title', '--body-file', '--outcome', '--reason', '--session-id'])
+  const skipValueFor = new Set(['--repo', '--from', '--approval', '--by', '--apply', '--base', '--status', '--title', '--body-file', '--outcome', '--reason', '--session-id', '--evidence', '--github-event', '--no-adr', '--rationale', '--format'])
   for (let i = start + 1; i < process.argv.length; i++) {
     const arg = process.argv[i]
     if (!arg) continue
@@ -119,8 +132,11 @@ async function main(): Promise<void> {
       break
     }
     case 'check': {
-      const base = getArg('--base')
-      const result = await runCheck(repoRoot, base)
+      const result = await runCheck(repoRoot, {
+        baseRef: getArg('--base'),
+        evidencePath: getArg('--evidence'),
+        githubEventPath: getArg('--github-event'),
+      })
       if (hasFlag('--json')) {
         console.log(JSON.stringify(result, null, 2))
       } else {
@@ -191,6 +207,31 @@ async function main(): Promise<void> {
       ).config
       await runSupersede({ repoRoot, config, oldAdrId: oldId, newAdrId: newId })
       console.log(`Superseded ${oldId} with ${newId}`)
+      break
+    }
+    case 'attest': {
+      const baseRef = getArg('--base')
+      if (!baseRef) throw new Error('Missing --base')
+      const config = parseConfig(
+        JSON.parse(await readFile(path.join(repoRoot, 'adr.config.json'), 'utf8')),
+      ).config
+      const evidence = await runAttest({
+        repoRoot,
+        config,
+        baseRef,
+        adrIds: getArgs('--adr'),
+        noAdrReason: getArg('--no-adr') as import('../core/types.js').NoAdrReason | undefined,
+        rationale: getArg('--rationale'),
+        reviewedProposalIds: getArgs('--reviewed-proposal'),
+      })
+      const format = getArg('--format') ?? 'json'
+      if (format === 'github-markdown') {
+        const { toGitHubMarkdown } = await import('./github-evidence.js')
+        console.log(toGitHubMarkdown(evidence))
+      } else {
+        const { serializeDecisionEvidence } = await import('../core/decision-evidence.js')
+        console.log(serializeDecisionEvidence(evidence))
+      }
       break
     }
     case 'turn-close': {

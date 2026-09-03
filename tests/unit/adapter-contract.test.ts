@@ -46,6 +46,11 @@ describe('adapter contract', () => {
     const out = toCursorSessionStart(ctx)
     expect(out.additional_context).toContain('ADR governance')
   })
+
+  it('does not tell agents that hooks create semantic receipts', () => {
+    expect(ctx.fullInstruction).not.toContain('silent-close')
+    expect(ctx.fullInstruction).toContain('never records a no-ADR reason on your behalf')
+  })
 })
 
 describe('privacy', () => {

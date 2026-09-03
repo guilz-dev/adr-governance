@@ -1,5 +1,16 @@
 import type { AdrConfig } from './types.js'
-import { SUPPORTED_CONFIG_VERSION } from './types.js'
+import { SUPPORTED_CONFIG_VERSION, SUPPORTED_CONFIG_VERSIONS } from './types.js'
+
+function defaultChangeGate(
+  overrides: Partial<AdrConfig['changeGate']> = {},
+): AdrConfig['changeGate'] {
+  return {
+    mode: 'enforce',
+    exemptPaths: [],
+    requireNoAdrRationale: true,
+    ...overrides,
+  }
+}
 
 export function defaultConfig(overrides: Partial<AdrConfig> = {}): AdrConfig {
   const base: AdrConfig = {
@@ -26,6 +37,7 @@ export function defaultConfig(overrides: Partial<AdrConfig> = {}): AdrConfig {
       afterTurnAudit: true,
       maxFollowUps: 1,
     },
+    changeGate: defaultChangeGate(),
     analysis: {
       maxFiles: 2000,
       maxBytesPerFile: 262_144,
@@ -49,7 +61,37 @@ export function defaultConfig(overrides: Partial<AdrConfig> = {}): AdrConfig {
     promotion: { ...base.promotion, ...overrides.promotion },
     documents: { ...base.documents, ...overrides.documents },
     hooks: { ...base.hooks, ...overrides.hooks },
+    changeGate: { ...base.changeGate, ...overrides.changeGate },
     analysis: { ...base.analysis, ...overrides.analysis },
+  }
+}
+
+function parseChangeGate(raw: unknown, version: number): AdrConfig['changeGate'] {
+  const gate = defaultChangeGate(version === 1 ? { mode: 'off' } : {})
+  if (!raw || typeof raw !== 'object') return gate
+  const obj = raw as Record<string, unknown>
+  if (version !== 1 && (obj.mode === 'off' || obj.mode === 'warn' || obj.mode === 'enforce')) {
+    gate.mode = obj.mode
+  }
+  if (Array.isArray(obj.exemptPaths)) {
+    gate.exemptPaths = obj.exemptPaths.filter((x): x is string => typeof x === 'string')
+  }
+  if (typeof obj.requireNoAdrRationale === 'boolean') {
+    gate.requireNoAdrRationale = obj.requireNoAdrRationale
+  }
+  return gate
+}
+
+function warnUnknownNestedKeys(
+  warnings: string[],
+  section: string,
+  raw: unknown,
+  knownKeys: readonly string[],
+): void {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return
+  const known = new Set(knownKeys)
+  for (const key of Object.keys(raw as Record<string, unknown>)) {
+    if (!known.has(key)) warnings.push(`Unknown config key: ${section}.${key}`)
   }
 }
 
@@ -67,6 +109,7 @@ export function parseConfig(raw: unknown): { config: AdrConfig; warnings: string
     'promotion',
     'documents',
     'hooks',
+    'changeGate',
     'analysis',
   ])
 
@@ -77,11 +120,44 @@ export function parseConfig(raw: unknown): { config: AdrConfig; warnings: string
   }
 
   const version = obj.version
-  if (version !== SUPPORTED_CONFIG_VERSION) {
+  if (
+    typeof version !== 'number' ||
+    !(SUPPORTED_CONFIG_VERSIONS as readonly number[]).includes(version)
+  ) {
     throw new Error(`Unsupported config version: ${String(version)}`)
   }
 
-  const config = defaultConfig()
+  if (version === 1) {
+    warnings.push('Config v1 detected; changeGate defaults to off until migration to v2')
+  }
+
+  warnUnknownNestedKeys(warnings, 'layout', obj.layout, [
+    'mode',
+    'acceptedDir',
+    'proposedDir',
+    'contextFile',
+    'contextMapFile',
+  ])
+  warnUnknownNestedKeys(warnings, 'promotion', obj.promotion, ['requireHumanAcceptance'])
+  warnUnknownNestedKeys(warnings, 'documents', obj.documents, [
+    'language',
+    'idDigits',
+    'allowAcceptedClarifications',
+    'legacyFrontmatter',
+  ])
+  warnUnknownNestedKeys(warnings, 'hooks', obj.hooks, ['enabled', 'afterTurnAudit', 'maxFollowUps'])
+  warnUnknownNestedKeys(warnings, 'changeGate', obj.changeGate, [
+    'mode',
+    'exemptPaths',
+    'requireNoAdrRationale',
+  ])
+  warnUnknownNestedKeys(warnings, 'analysis', obj.analysis, [
+    'maxFiles',
+    'maxBytesPerFile',
+    'exclude',
+  ])
+
+  const config = defaultConfig({ version })
   if (obj.$schema !== undefined) {
     config.$schema = String(obj.$schema)
   }
@@ -124,6 +200,8 @@ export function parseConfig(raw: unknown): { config: AdrConfig; warnings: string
     if (typeof h.afterTurnAudit === 'boolean') config.hooks.afterTurnAudit = h.afterTurnAudit
     if (typeof h.maxFollowUps === 'number') config.hooks.maxFollowUps = h.maxFollowUps
   }
+
+  config.changeGate = parseChangeGate(obj.changeGate, version)
 
   const analysis = obj.analysis
   if (analysis && typeof analysis === 'object') {

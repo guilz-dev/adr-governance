@@ -1,0 +1,44 @@
+{
+  "$schema": ".adr-governance/schema/adr-config.schema.json",
+  "version": 2,
+  "layout": {
+    "mode": "split",
+    "acceptedDir": "docs/adr",
+    "proposedDir": "docs/proposed-adr",
+    "contextFile": "CONTEXT.md",
+    "contextMapFile": "CONTEXT-MAP.md"
+  },
+  "promotion": {
+    "requireHumanAcceptance": true
+  },
+  "documents": {
+    "language": "en",
+    "idDigits": 4,
+    "allowAcceptedClarifications": true,
+    "legacyFrontmatter": false
+  },
+  "hooks": {
+    "enabled": false,
+    "afterTurnAudit": true,
+    "maxFollowUps": 1
+  },
+  "changeGate": {
+    "mode": "warn",
+    "exemptPaths": [],
+    "requireNoAdrRationale": true
+  },
+  "analysis": {
+    "maxFiles": 2000,
+    "maxBytesPerFile": 262144,
+    "exclude": [
+      ".git/**",
+      "node_modules/**",
+      "vendor/**",
+      "dist/**",
+      "build/**",
+      "**/.env*",
+      "**/*secret*",
+      "**/*credential*"
+    ]
+  }
+}

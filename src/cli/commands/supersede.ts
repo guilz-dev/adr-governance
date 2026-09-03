@@ -2,11 +2,41 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import type { AdrConfig } from '../../core/types.js'
-import { formatAdrId } from '../../core/numbering.js'
-import { buildAdrContent } from '../../core/lifecycle.js'
 import { acquireLock, atomicWriteFile } from '../../core/locks.js'
-import { listAdrFiles } from '../../core/repository-state.js'
+import { listAdrFiles, loadAllAdrs } from '../../core/repository-state.js'
 import { parseAdrFromPath } from '../../core/validation.js'
+import { validateAdrTransitions } from '../../core/adr-transitions.js'
+
+const RAW_FRONTMATTER_RE = /^(---\r?\n)([\s\S]*?)(\r?\n---)([\s\S]*)$/
+
+function updateFrontmatter(content: string, updates: Record<string, string>): string {
+  const match = RAW_FRONTMATTER_RE.exec(content)
+  if (!match) throw new Error('Could not update ADR frontmatter')
+
+  const opening = match[1] ?? ''
+  const yaml = match[2] ?? ''
+  const closing = match[3] ?? ''
+  const body = match[4] ?? ''
+  const newline = yaml.includes('\r\n') ? '\r\n' : '\n'
+  const pending = new Map(Object.entries(updates))
+  const lines = yaml.split(/\r?\n/).map((line) => {
+    const field = /^(\s*)([^:\s][^:]*?)\s*:/.exec(line)
+    if (!field) return line
+
+    const key = field[2]?.trim()
+    if (!key || !pending.has(key)) return line
+
+    const value = pending.get(key)
+    pending.delete(key)
+    return `${field[1] ?? ''}${key}: ${value}`
+  })
+
+  for (const [key, value] of pending) {
+    lines.push(`${key}: ${value}`)
+  }
+
+  return `${opening}${lines.join(newline)}${closing}${body}`
+}
 
 export async function runSupersede(options: {
   repoRoot: string
@@ -29,38 +59,58 @@ export async function runSupersede(options: {
     const newFile = files.find((f) => f.startsWith(`${newNum.padStart(digits, '0')}-`))
     if (!newFile) throw new Error(`New ADR not found: ${options.newAdrId}`)
 
+    const oldRel = path.join(options.config.layout.acceptedDir, oldFile)
     const newRel = path.join(options.config.layout.acceptedDir, newFile)
-    const newContent = await readFile(path.join(options.repoRoot, newRel), 'utf8')
+    const oldPath = path.join(options.repoRoot, oldRel)
+    const newPath = path.join(options.repoRoot, newRel)
+    const oldContent = await readFile(oldPath, 'utf8')
+    const newContent = await readFile(newPath, 'utf8')
+    const oldParsed = parseAdrFromPath(oldRel, oldContent, 'accepted', options.config)
     const newParsed = parseAdrFromPath(newRel, newContent, 'accepted', options.config)
+    if (!oldParsed) throw new Error('Could not parse old ADR')
     if (!newParsed) throw new Error('Could not parse new ADR')
+    if (oldParsed.id === newParsed.id) throw new Error('ADR cannot supersede itself')
+    if (oldParsed.frontmatter.status !== 'accepted') {
+      throw new Error(`Old ADR must be accepted before superseding: ${options.oldAdrId}`)
+    }
     if (newParsed.frontmatter.status !== 'accepted') {
       throw new Error(`New ADR must be accepted before superseding: ${options.newAdrId}`)
     }
-    const oldId = formatAdrId(Number.parseInt(oldNum, 10), digits)
-    if (
-      !newContent.includes(oldId) &&
-      !newContent.includes(oldFile.replace('.md', '')) &&
-      !newContent.toLowerCase().includes(`adr-${oldNum}`)
-    ) {
-      throw new Error(`New ADR must reference the superseded ADR (${oldId})`)
-    }
-
-    const rel = path.join(options.config.layout.acceptedDir, oldFile)
-    const content = await readFile(path.join(options.repoRoot, rel), 'utf8')
-    const parsed = parseAdrFromPath(rel, content, 'accepted', options.config)
-    if (!parsed) throw new Error('Could not parse old ADR')
 
     const today = new Date().toISOString().slice(0, 10)
-    const updated = buildAdrContent(
-      {
-        status: 'superseded',
-        date: today,
-        superseded_by: options.newAdrId,
-      },
-      parsed.title,
-      parsed.body,
-    )
-    await atomicWriteFile(path.join(options.repoRoot, rel), updated)
+    const oldUpdated = updateFrontmatter(oldContent, {
+      status: 'superseded',
+      date: today,
+      superseded_by: newParsed.id,
+    })
+    const newUpdated = updateFrontmatter(newContent, {
+      supersedes: [...new Set([...(newParsed.frontmatter.supersedes ?? []), oldParsed.id])].join(', '),
+    })
+    const oldCandidate = parseAdrFromPath(oldRel, oldUpdated, 'accepted', options.config)
+    const newCandidate = parseAdrFromPath(newRel, newUpdated, 'accepted', options.config)
+    if (!oldCandidate || !newCandidate) throw new Error('Could not parse supersession candidates')
+
+    const currentAdrs = await loadAllAdrs(options.repoRoot, options.config)
+    const candidateAdrs = currentAdrs.map((adr) => {
+      if (adr.id === oldParsed.id) return oldCandidate
+      if (adr.id === newParsed.id) return newCandidate
+      return adr
+    })
+    const candidateIssues = validateAdrTransitions(currentAdrs, candidateAdrs)
+      .filter((issue) => issue.severity === 'error')
+    if (candidateIssues.length > 0) {
+      throw new Error(`Supersession validation failed: ${candidateIssues.map((issue) => issue.message).join('; ')}`)
+    }
+
+    let oldWritten = false
+    try {
+      await atomicWriteFile(oldPath, oldUpdated)
+      oldWritten = true
+      await atomicWriteFile(newPath, newUpdated)
+    } catch (error) {
+      if (oldWritten) await atomicWriteFile(oldPath, oldContent)
+      throw error
+    }
   } finally {
     await release()
   }

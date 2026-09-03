@@ -9,6 +9,8 @@ Read [references/decision-policy.md](./references/decision-policy.md) for the th
 
 ## When to act
 
+A proposed ADR is not implementation authority. Before changing non-governance files, either reference an accepted ADR that authorizes the decision or explicitly determine that no ADR is required. If requested implementation depends on a proposed ADR, stop and resolve or promote the decision first. Never narrow CONTEXT wording to make an unresolved decision appear accepted.
+
 Evaluate ADR/CONTEXT on every turn where the hook reports `possible` or `likely` architectural impact, or when you are making or confirming a design decision.
 
 ## Workflow

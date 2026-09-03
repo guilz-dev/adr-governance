@@ -1,4 +1,4 @@
-import type { AdrConfig, NoAdrReason, RiskLevel, TurnState } from '../core/types.js'
+import type { AdrConfig, RiskLevel, TurnState } from '../core/types.js'
 
 export type HookContext = {
   risk: RiskLevel
@@ -34,8 +34,8 @@ export function buildFullInstruction(config: AdrConfig, relevantAdrPaths: string
     'Relevant ADRs:',
     paths,
     '',
-    'When the hook silent-closes the turn, no manual turn-close is required.',
-    'Otherwise update ADR/CONTEXT or record a no-ADR reason via turn-close before the turn ends.',
+    'Before finishing, update ADR/CONTEXT or explicitly record a no-ADR reason via turn-close when no ADR is required.',
+    'The after-turn hook may request one audit follow-up but never records a no-ADR reason on your behalf.',
   ].join('\n')
 }
 
@@ -63,8 +63,6 @@ export type AfterTurnDecision = {
   allowFinish: boolean
   followUpMessage?: string
   warning?: string
-  /** Hook-recorded no-change receipt when audit follow-up would be poor UX. */
-  silentCloseReason?: NoAdrReason
 }
 
 export const AUDIT_FOLLOWUP_MESSAGE =
@@ -79,6 +77,7 @@ export function decideAfterTurn(
   docsUpdated: boolean,
   config: AdrConfig,
   conversationFollowUpCount = 0,
+  repositoryChanged = false,
 ): AfterTurnDecision {
   if (docsUpdated || state.receipt !== null) {
     return { allowFinish: true }
@@ -98,18 +97,25 @@ export function decideAfterTurn(
     }
     return {
       allowFinish: true,
-      warning: 'ADR audit skipped after follow-up limit',
-      silentCloseReason: 'implementation-detail',
+      warning: 'ADR evaluation unresolved; CI decision gate remains authoritative',
     }
   }
 
-  // Low-risk turns: record receipt in the hook; no user-visible follow-up turn.
-  if (state.risk === 'none') {
-    return { allowFinish: true, silentCloseReason: 'implementation-detail' }
+  if (state.risk === 'none' && !repositoryChanged) {
+    return { allowFinish: true }
   }
 
-  if (state.risk === 'possible' || state.risk === 'likely') {
-    return { allowFinish: true, silentCloseReason: 'reversible' }
+  if (repositoryChanged || state.risk === 'likely') {
+    if (auditEnabled) {
+      return {
+        allowFinish: false,
+        followUpMessage: AUDIT_FOLLOWUP_MESSAGE,
+      }
+    }
+    return {
+      allowFinish: true,
+      warning: 'ADR evaluation unresolved; CI decision gate remains authoritative',
+    }
   }
 
   return { allowFinish: true }

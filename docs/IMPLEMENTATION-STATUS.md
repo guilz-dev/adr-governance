@@ -1,6 +1,6 @@
 # Implementation status (vs design spec)
 
-Design spec: `docs/superpowers/specs/2026-08-22-adr-governance-design.md` in the [guilz](https://github.com/guilz-dev/guilz) monorepo.
+Design spec: [`docs/specs/adr-governance-design.md`](./specs/adr-governance-design.md) in this repository. The guilz monorepo copy is historical.
 
 **Current release:** v0.1.11
 
@@ -17,12 +17,22 @@ Design spec: `docs/superpowers/specs/2026-08-22-adr-governance-design.md` in the
 | Hook merge (Cursor / Claude / Codex / Gemini) | Done |
 | after-turn fingerprint + doc path audit | Done |
 | Conversation-scoped audit follow-up limit | Done (v0.1.9) |
-| Silent turn-close for low-risk turns | Done (v0.1.10, extended to `likely` in v0.1.11) |
+| Synthetic silent turn-close receipts | Removed in Unreleased; hooks never create semantic receipts |
+| Decision Authority Gate (`attest`, `check --base`, config v2) | Implemented in Unreleased; self-hosting remains `warn` until v0.2.0 |
 | `check`: ADR validation, manifest drift, hook entries, CONTEXT links | Done |
 | `sync` conflict on hand-edited generated files | Done |
 | Human promotion audit log (ndjson) | Done |
 | CI workflow candidate in init plan (GitHub Actions) | Done |
-| Unit + integration + adapter contract tests | Partial (regression tests for fingerprint, base-ref, turn-close, follow-up loop, runtime payload identity) |
+| Unit + integration + adapter contract tests | Expanded for decision evidence, lifecycle, corpus, classification, supersession, and actual-change audit |
+
+## Unreleased Decision Authority Gate changes
+
+| Change | Detail |
+|--------|--------|
+| hook decision behavior | Actual repository changes or `likely` risk trigger at most one audit follow-up when neither docs nor an explicit receipt resolves the turn |
+| semantic receipts | Hooks no longer infer or write no-ADR reasons; `turn-close` remains an explicit Agent/human action |
+| CI authority | `check --base` validates provider-neutral evidence and fails closed in `enforce` mode |
+| lifecycle | New or changed accepted ADRs require acceptance metadata; supersession is reciprocal and atomic at command level |
 
 ## v0.1.11 UX improvements
 
@@ -79,8 +89,8 @@ not isolated when a runtime supplies no `conversation_id`, `session_id`, or
 | Area | Notes |
 |------|--------|
 | Concurrent create integration test | Lock logic exists; dedicated test pending |
-| Skill behavior TDD across 4 live runtimes | Manual / agent-driven baseline still required |
-| Behavior test suite directory | `tests/behavior/` placeholder |
+| Skill behavior TDD across 4 live runtimes | RED fixtures and baseline exist; repeated GREEN live-runtime results remain pending |
+| GitHub CI installer and v0.2.0 rollout | Planned follow-up; repository remains in `changeGate.mode: warn` |
 
 ## Target project init
 

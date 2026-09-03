@@ -13,16 +13,41 @@ import { assessPromptRisk, rankRelevantAdrs } from '../../src/core/risk-signals.
 import type { ParsedAdr } from '../../src/core/types.js'
 
 describe('config', () => {
-  it('defaults to split layout', () => {
+  it('defaults to split layout and config v2 enforce gate', () => {
     const c = defaultConfig()
     expect(c.layout.mode).toBe('split')
+    expect(c.version).toBe(2)
+    expect(c.changeGate.mode).toBe('enforce')
     expect(c.promotion.requireHumanAcceptance).toBe(false)
   })
 
   it('parses config with warnings for unknown keys', () => {
-    const { config, warnings } = parseConfig({ version: 1, unknownKey: true })
-    expect(config.version).toBe(1)
+    const { config, warnings } = parseConfig({ version: 2, unknownKey: true })
+    expect(config.version).toBe(2)
     expect(warnings.some((w) => w.includes('unknownKey'))).toBe(true)
+  })
+
+  it('maps v1 config to gate off with migration warning', () => {
+    const { config, warnings } = parseConfig({
+      version: 1,
+      changeGate: { mode: 'enforce' },
+    })
+    expect(config.version).toBe(1)
+    expect(config.changeGate.mode).toBe('off')
+    expect(warnings.some((w) => w.includes('v1'))).toBe(true)
+  })
+
+  it('warns about unknown nested config keys while retaining supported settings', () => {
+    const { config, warnings } = parseConfig({
+      version: 2,
+      layout: { mode: 'single', unknownLayoutSetting: true },
+      changeGate: { mode: 'warn', unknownGateSetting: true },
+    })
+
+    expect(config.layout.mode).toBe('single')
+    expect(config.changeGate.mode).toBe('warn')
+    expect(warnings).toContain('Unknown config key: layout.unknownLayoutSetting')
+    expect(warnings).toContain('Unknown config key: changeGate.unknownGateSetting')
   })
 
   it('supports single dir layout', () => {
