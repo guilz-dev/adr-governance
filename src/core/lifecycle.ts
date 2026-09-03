@@ -38,6 +38,12 @@ export function parseFrontmatter(content: string): {
   if (fields.superseded_by) {
     frontmatter.superseded_by = fields.superseded_by
   }
+  if (fields.supersedes) {
+    frontmatter.supersedes = fields.supersedes
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+  }
 
   return { frontmatter, body }
 }
@@ -46,6 +52,7 @@ export function serializeFrontmatter(fm: AdrFrontmatter): string {
   const lines = ['---', `status: ${fm.status}`, `date: ${fm.date}`]
   if (fm.acceptance) lines.push(`acceptance: ${fm.acceptance}`)
   if (fm.superseded_by) lines.push(`superseded_by: ${fm.superseded_by}`)
+  if (fm.supersedes?.length) lines.push(`supersedes: ${fm.supersedes.join(', ')}`)
   lines.push('---', '')
   return lines.join('\n')
 }

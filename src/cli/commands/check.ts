@@ -2,7 +2,15 @@ import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 
+import { validateAdrTransitions } from '../../core/adr-transitions.js'
+import { evaluateChangeGate } from '../../core/change-gate.js'
 import { parseConfig } from '../../core/config.js'
+import {
+  buildRefDecisionCorpus,
+  governancePaths,
+  hashDecisionCorpus,
+} from '../../core/decision-corpus.js'
+import { contentHashForFile, parseDecisionEvidence } from '../../core/decision-evidence.js'
 import {
   collectValidationIssues,
 } from '../../core/validation.js'
@@ -12,6 +20,14 @@ import type { ParsedAdr } from '../../core/types.js'
 import type { ValidationIssue } from '../../core/validation.js'
 import { verifyAllRuntimeHookEntries } from '../../installer/hook-merge.js'
 import { validateContextLinks } from '../../core/context-links.js'
+import { listChangedPaths, readFileAtRef, refExists } from '../git-diff.js'
+import { parseGitHubEventFile } from '../github-evidence.js'
+
+export type CheckOptions = {
+  baseRef?: string
+  evidencePath?: string
+  githubEventPath?: string
+}
 
 export type CheckResult = {
   ok: boolean
@@ -19,7 +35,26 @@ export type CheckResult = {
   issues: Array<{ severity: string; code: string; message: string; path?: string }>
 }
 
-export async function runCheck(repoRoot: string, baseRef?: string): Promise<CheckResult> {
+export async function runCheck(
+  repoRoot: string,
+  options?: string | CheckOptions,
+): Promise<CheckResult> {
+  const resolved: CheckOptions =
+    typeof options === 'string' ? { baseRef: options } : (options ?? {})
+  if (resolved.evidencePath && resolved.githubEventPath) {
+    return {
+      ok: false,
+      exitCode: 2,
+      issues: [
+        {
+          severity: 'error',
+          code: 'invalid-check-options',
+          message: 'Specify only one of --evidence or --github-event',
+        },
+      ],
+    }
+  }
+
   const configPath = path.join(repoRoot, 'adr.config.json')
   if (!existsSync(configPath)) {
     return {
@@ -100,9 +135,11 @@ export async function runCheck(repoRoot: string, baseRef?: string): Promise<Chec
     }
   }
 
-  if (baseRef) {
-    const baseIssues = await checkBaseRefDuplicates(repoRoot, baseRef, adrs)
+  if (resolved.baseRef) {
+    const baseIssues = await checkBaseRefDuplicates(repoRoot, resolved.baseRef, adrs, config)
     issues.push(...baseIssues)
+    const gateIssues = await checkDecisionAuthority(repoRoot, config, adrs, resolved)
+    issues.push(...gateIssues)
   }
 
   for (const message of await verifyAllRuntimeHookEntries(repoRoot)) {
@@ -131,10 +168,147 @@ async function listContextFiles(repoRoot: string, candidates: string[]): Promise
   return [...new Set(paths)]
 }
 
+async function checkDecisionAuthority(
+  repoRoot: string,
+  config: Awaited<ReturnType<typeof parseConfig>>['config'],
+  headAdrs: ParsedAdr[],
+  options: CheckOptions,
+): Promise<ValidationIssue[]> {
+  if (!options.baseRef || config.changeGate.mode === 'off') return []
+
+  const issues: ValidationIssue[] = []
+  const baseRef = options.baseRef
+
+  if (!(await refExists(repoRoot, baseRef))) {
+    if (config.changeGate.mode === 'enforce') {
+      issues.push({
+        severity: 'error',
+        code: 'base-ref-unavailable',
+        message: `Could not read base ref ${baseRef}`,
+      })
+    }
+    return issues
+  }
+
+  const baseAdrs = await loadAdrsAtRef(repoRoot, baseRef, config)
+  issues.push(...validateAdrTransitions(baseAdrs, headAdrs))
+
+  let evidence = null
+  if (options.evidencePath) {
+    try {
+      evidence = parseDecisionEvidence(JSON.parse(await readFile(options.evidencePath, 'utf8')))
+    } catch (e) {
+      issues.push({
+        severity: config.changeGate.mode === 'warn' ? 'warning' : 'error',
+        code: 'decision-evidence-invalid',
+        message: `Could not load evidence: ${String(e)}`,
+      })
+    }
+  } else if (options.githubEventPath) {
+    try {
+      const event = JSON.parse(await readFile(options.githubEventPath, 'utf8'))
+      evidence = parseGitHubEventFile(event)
+      if (!evidence) {
+        issues.push({
+          severity: config.changeGate.mode === 'warn' ? 'warning' : 'error',
+          code: 'decision-evidence-required',
+          message: 'PR body does not contain a valid adr-governance evidence block',
+        })
+      }
+    } catch (e) {
+      issues.push({
+        severity: config.changeGate.mode === 'warn' ? 'warning' : 'error',
+        code: 'decision-evidence-invalid',
+        message: `Could not parse GitHub event: ${String(e)}`,
+      })
+    }
+  }
+
+  const corpus = await buildRefDecisionCorpus(repoRoot, baseRef, config)
+  const expectedHash = hashDecisionCorpus(corpus)
+  const changedPaths = await listChangedPaths(repoRoot, baseRef)
+  const govPaths = governancePaths(config)
+
+  const baseByPath = new Map(baseAdrs.map((a) => [a.path, a]))
+  const normalizedChanged = new Set(changedPaths.map((p) => p.replace(/\\/g, '/')))
+  const changedProposed = headAdrs.filter((adr) => {
+    if (adr.directory !== 'proposed') return false
+    const normalizedPath = adr.path.replace(/\\/g, '/')
+    if (normalizedChanged.has(normalizedPath)) return true
+    const base = baseByPath.get(adr.path)
+    if (!base) return true
+    if (base.frontmatter.status !== adr.frontmatter.status) return true
+    return base.body !== adr.body
+  })
+
+  const adrContentHashes = new Map<string, string>()
+  for (const adr of headAdrs) {
+    if (adr.frontmatter.status !== 'accepted') continue
+    const abs = path.join(repoRoot, adr.path)
+    if (!existsSync(abs)) continue
+    const content = await readFile(abs, 'utf8')
+    adrContentHashes.set(adr.id, contentHashForFile(content))
+  }
+
+  issues.push(
+    ...evaluateChangeGate({
+      config,
+      changedPaths,
+      governancePaths: govPaths,
+      changedProposedAdrs: changedProposed,
+      adrContentHashes,
+      expectedDecisionCorpusHash: expectedHash,
+      evidence,
+    }),
+  )
+
+  return issues
+}
+
+async function loadAdrsAtRef(
+  repoRoot: string,
+  ref: string,
+  config: Awaited<ReturnType<typeof parseConfig>>['config'],
+): Promise<ParsedAdr[]> {
+  const { parseAdrFromPath } = await import('../../core/validation.js')
+  const { execFile } = await import('node:child_process')
+  const { promisify } = await import('node:util')
+  const exec = promisify(execFile)
+
+  const adrs: ParsedAdr[] = []
+  try {
+    const { stdout } = await exec('git', ['ls-tree', '-r', '--name-only', ref], {
+      cwd: repoRoot,
+    })
+    for (const file of stdout.split('\n').filter(Boolean)) {
+      if (!file.endsWith('.md') || file.endsWith('/README.md')) continue
+      let kind: 'accepted' | 'proposed' | null = null
+      if (file.startsWith(`${config.layout.acceptedDir}/`)) kind = 'accepted'
+      else if (
+        (config.layout.mode === 'split' ||
+          config.layout.acceptedDir !== config.layout.proposedDir) &&
+        file.startsWith(`${config.layout.proposedDir}/`)
+      ) {
+        kind = 'proposed'
+      }
+      if (!kind) continue
+      const content = await readFileAtRef(repoRoot, ref, file)
+      if (!content) continue
+      const parsed = parseAdrFromPath(file, content, kind, config)
+      if (parsed) adrs.push(parsed)
+    }
+  } catch {
+    return []
+  }
+
+  return adrs.sort((a, b) => a.number - b.number)
+}
+
 async function checkBaseRefDuplicates(
   repoRoot: string,
   baseRef: string,
   currentAdrs: ParsedAdr[],
+  config: Awaited<ReturnType<typeof parseConfig>>['config'],
 ): Promise<ValidationIssue[]> {
   const { execFile } = await import('node:child_process')
   const { promisify } = await import('node:util')
@@ -186,11 +360,19 @@ async function checkBaseRefDuplicates(
       }
     }
   } catch {
-    issues.push({
-      severity: 'warning',
-      code: 'base-ref-unavailable',
-      message: `Could not compare against ${baseRef}`,
-    })
+    if (config.changeGate.mode === 'enforce') {
+      issues.push({
+        severity: 'error',
+        code: 'base-ref-unavailable',
+        message: `Could not compare against ${baseRef}`,
+      })
+    } else {
+      issues.push({
+        severity: 'warning',
+        code: 'base-ref-unavailable',
+        message: `Could not compare against ${baseRef}`,
+      })
+    }
   }
 
   return issues

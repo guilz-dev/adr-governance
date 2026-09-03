@@ -1,10 +1,11 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "ADR Governance Config",
-  "type": "object",
-  "required": ["version", "layout", "promotion", "documents", "hooks", "analysis"],
-  "properties": {
-    "version": { "type": "integer", "const": 1 },
+  "oneOf": [
+    { "$ref": "#/$defs/configV1" },
+    { "$ref": "#/$defs/configV2" }
+  ],
+  "$defs": {
     "layout": {
       "type": "object",
       "required": ["mode", "acceptedDir", "proposedDir", "contextFile", "contextMapFile"],
@@ -16,35 +17,88 @@
         "contextMapFile": { "type": "string" }
       }
     },
-    "promotion": {
+    "changeGate": {
       "type": "object",
+      "required": ["mode", "exemptPaths", "requireNoAdrRationale"],
       "properties": {
-        "requireHumanAcceptance": { "type": "boolean" }
+        "mode": { "enum": ["off", "warn", "enforce"] },
+        "exemptPaths": { "type": "array", "items": { "type": "string" } },
+        "requireNoAdrRationale": { "type": "boolean" }
       }
     },
-    "documents": {
+    "configV1": {
       "type": "object",
+      "required": ["version", "layout", "promotion", "documents", "hooks", "analysis"],
       "properties": {
-        "language": { "enum": ["ja", "en"] },
-        "idDigits": { "type": "integer", "minimum": 3, "maximum": 6 },
-        "allowAcceptedClarifications": { "type": "boolean" },
-        "legacyFrontmatter": { "type": "boolean" }
+        "version": { "type": "integer", "const": 1 },
+        "layout": { "$ref": "#/$defs/layout" },
+        "promotion": {
+          "type": "object",
+          "properties": { "requireHumanAcceptance": { "type": "boolean" } }
+        },
+        "documents": {
+          "type": "object",
+          "properties": {
+            "language": { "enum": ["ja", "en"] },
+            "idDigits": { "type": "integer", "minimum": 3, "maximum": 6 },
+            "allowAcceptedClarifications": { "type": "boolean" },
+            "legacyFrontmatter": { "type": "boolean" }
+          }
+        },
+        "hooks": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "afterTurnAudit": { "type": "boolean" },
+            "maxFollowUps": { "type": "integer", "minimum": 0, "maximum": 3 }
+          }
+        },
+        "analysis": {
+          "type": "object",
+          "properties": {
+            "maxFiles": { "type": "integer" },
+            "maxBytesPerFile": { "type": "integer" },
+            "exclude": { "type": "array", "items": { "type": "string" } }
+          }
+        }
       }
     },
-    "hooks": {
+    "configV2": {
       "type": "object",
+      "required": ["version", "layout", "promotion", "documents", "hooks", "changeGate", "analysis"],
       "properties": {
-        "enabled": { "type": "boolean" },
-        "afterTurnAudit": { "type": "boolean" },
-        "maxFollowUps": { "type": "integer", "minimum": 0, "maximum": 3 }
-      }
-    },
-    "analysis": {
-      "type": "object",
-      "properties": {
-        "maxFiles": { "type": "integer" },
-        "maxBytesPerFile": { "type": "integer" },
-        "exclude": { "type": "array", "items": { "type": "string" } }
+        "version": { "type": "integer", "const": 2 },
+        "layout": { "$ref": "#/$defs/layout" },
+        "promotion": {
+          "type": "object",
+          "properties": { "requireHumanAcceptance": { "type": "boolean" } }
+        },
+        "documents": {
+          "type": "object",
+          "properties": {
+            "language": { "enum": ["ja", "en"] },
+            "idDigits": { "type": "integer", "minimum": 3, "maximum": 6 },
+            "allowAcceptedClarifications": { "type": "boolean" },
+            "legacyFrontmatter": { "type": "boolean" }
+          }
+        },
+        "hooks": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "afterTurnAudit": { "type": "boolean" },
+            "maxFollowUps": { "type": "integer", "minimum": 0, "maximum": 3 }
+          }
+        },
+        "changeGate": { "$ref": "#/$defs/changeGate" },
+        "analysis": {
+          "type": "object",
+          "properties": {
+            "maxFiles": { "type": "integer" },
+            "maxBytesPerFile": { "type": "integer" },
+            "exclude": { "type": "array", "items": { "type": "string" } }
+          }
+        }
       }
     }
   }

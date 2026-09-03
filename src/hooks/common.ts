@@ -1,4 +1,4 @@
-import type { AdrConfig, NoAdrReason, RiskLevel, TurnState } from '../core/types.js'
+import type { AdrConfig, RiskLevel, TurnState } from '../core/types.js'
 
 export type HookContext = {
   risk: RiskLevel
@@ -63,8 +63,6 @@ export type AfterTurnDecision = {
   allowFinish: boolean
   followUpMessage?: string
   warning?: string
-  /** Hook-recorded no-change receipt when audit follow-up would be poor UX. */
-  silentCloseReason?: NoAdrReason
 }
 
 export const AUDIT_FOLLOWUP_MESSAGE =
@@ -98,18 +96,25 @@ export function decideAfterTurn(
     }
     return {
       allowFinish: true,
-      warning: 'ADR audit skipped after follow-up limit',
-      silentCloseReason: 'implementation-detail',
+      warning: 'ADR evaluation unresolved; CI decision gate remains authoritative',
     }
   }
 
-  // Low-risk turns: record receipt in the hook; no user-visible follow-up turn.
   if (state.risk === 'none') {
-    return { allowFinish: true, silentCloseReason: 'implementation-detail' }
+    return { allowFinish: true }
   }
 
-  if (state.risk === 'possible' || state.risk === 'likely') {
-    return { allowFinish: true, silentCloseReason: 'reversible' }
+  if (state.risk === 'likely' || state.risk === 'possible') {
+    if (auditEnabled) {
+      return {
+        allowFinish: false,
+        followUpMessage: AUDIT_FOLLOWUP_MESSAGE,
+      }
+    }
+    return {
+      allowFinish: true,
+      warning: 'ADR evaluation unresolved; CI decision gate remains authoritative',
+    }
   }
 
   return { allowFinish: true }

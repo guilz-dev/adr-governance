@@ -1,13 +1,10 @@
 import { writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import { recordTurnReceiptForState } from '../cli/commands/turn-close.js'
 import { parseConfig } from '../core/config.js'
-import type { NoAdrReason } from '../core/types.js'
 import { findRepoRoot, readConfig, STATE_DIR } from '../core/repository-state.js'
 import { decideAfterTurn } from './common.js'
 import { loadCurrentTurnState } from './before-turn.js'
-import { loadTurnStateByTurnId } from './turn-pointer.js'
 import { detectDocsPathsUpdated } from '../core/fingerprint.js'
 import {
   incrementAuditChainFollowUpForScope,
@@ -25,11 +22,6 @@ export type AfterTurnResult = {
   allowFinish: boolean
   followUpMessage?: string
   warning?: string
-}
-
-function parentSilentCloseReason(parentRisk: string | undefined): NoAdrReason {
-  if (parentRisk === 'likely' || parentRisk === 'possible') return 'reversible'
-  return 'implementation-detail'
 }
 
 export async function runAfterTurn(input: AfterTurnInput): Promise<AfterTurnResult> {
@@ -79,25 +71,6 @@ export async function runAfterTurn(input: AfterTurnInput): Promise<AfterTurnResu
 
   if (docsUpdated || state.receipt !== null) {
     await markAuditChainResolvedForScope(repoRoot, conversationId)
-  }
-
-  if (decision.silentCloseReason && state.receipt === null) {
-    const receipt = {
-      outcome: 'no-change' as const,
-      reason: decision.silentCloseReason,
-      timestamp: new Date().toISOString(),
-    }
-    await recordTurnReceiptForState(repoRoot, state, receipt)
-
-    if (state.isAuditFollowUp && auditChain?.lastTurnId && auditChain.lastTurnId !== state.turnId) {
-      const parentState = await loadTurnStateByTurnId(repoRoot, auditChain.lastTurnId)
-      if (parentState && parentState.receipt === null) {
-        await recordTurnReceiptForState(repoRoot, parentState, {
-          ...receipt,
-          reason: parentSilentCloseReason(parentState.risk),
-        })
-      }
-    }
   }
 
   if (!decision.allowFinish && decision.followUpMessage) {

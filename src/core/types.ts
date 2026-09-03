@@ -19,6 +19,12 @@ export type NoAdrReason =
 
 export type LayoutMode = 'split' | 'single'
 
+export type ChangeGateConfig = {
+  mode: 'off' | 'warn' | 'enforce'
+  exemptPaths: string[]
+  requireNoAdrRationale: boolean
+}
+
 export type AdrConfig = {
   $schema?: string
   version: number
@@ -43,6 +49,7 @@ export type AdrConfig = {
     afterTurnAudit: boolean
     maxFollowUps: number
   }
+  changeGate: ChangeGateConfig
   analysis: {
     maxFiles: number
     maxBytesPerFile: number
@@ -157,6 +164,7 @@ export type AdrFrontmatter = {
   date: string
   acceptance?: Acceptance
   superseded_by?: string
+  supersedes?: string[]
 }
 
 export type ParsedAdr = {
@@ -181,4 +189,5 @@ export const NO_ADR_REASONS: readonly NoAdrReason[] = [
   'already-recorded',
 ] as const
 
-export const SUPPORTED_CONFIG_VERSION = 1
+export const SUPPORTED_CONFIG_VERSION = 2
+export const SUPPORTED_CONFIG_VERSIONS = [1, 2] as const
