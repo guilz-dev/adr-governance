@@ -77,6 +77,7 @@ export function decideAfterTurn(
   docsUpdated: boolean,
   config: AdrConfig,
   conversationFollowUpCount = 0,
+  repositoryChanged = false,
 ): AfterTurnDecision {
   if (docsUpdated || state.receipt !== null) {
     return { allowFinish: true }
@@ -100,11 +101,11 @@ export function decideAfterTurn(
     }
   }
 
-  if (state.risk === 'none') {
+  if (state.risk === 'none' && !repositoryChanged) {
     return { allowFinish: true }
   }
 
-  if (state.risk === 'likely' || state.risk === 'possible') {
+  if (repositoryChanged || state.risk === 'likely') {
     if (auditEnabled) {
       return {
         allowFinish: false,

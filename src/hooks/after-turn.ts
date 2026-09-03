@@ -5,7 +5,8 @@ import { parseConfig } from '../core/config.js'
 import { findRepoRoot, readConfig, STATE_DIR } from '../core/repository-state.js'
 import { decideAfterTurn } from './common.js'
 import { loadCurrentTurnState } from './before-turn.js'
-import { detectDocsPathsUpdated } from '../core/fingerprint.js'
+import { buildRepositoryFingerprint, detectDocsPathsUpdated } from '../core/fingerprint.js'
+import { gitLsFiles } from '../cli/git.js'
 import {
   incrementAuditChainFollowUpForScope,
   loadAuditChainForScope,
@@ -61,12 +62,15 @@ export async function runAfterTurn(input: AfterTurnInput): Promise<AfterTurnResu
   ]
 
   const docsUpdated = await detectDocsPathsUpdated(repoRoot, docPaths, state.createdAt)
+  const afterFingerprint = await buildRepositoryFingerprint(repoRoot, await gitLsFiles(repoRoot))
+  const repositoryChanged = state.beforeFingerprint.gitStatusHash !== afterFingerprint.gitStatusHash
 
   const decision = decideAfterTurn(
     state,
     docsUpdated,
     config,
     conversationFollowUpCount,
+    repositoryChanged,
   )
 
   if (docsUpdated || state.receipt !== null) {

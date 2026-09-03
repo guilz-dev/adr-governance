@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -28,6 +28,7 @@ import {
   loadTurnStateByTurnId,
   loadTurnStateForSession,
 } from '../../src/hooks/turn-pointer.js'
+import { gitCommit, initTestGitRepo } from '../helpers/git-test-repo.js'
 
 function baseTurnState(overrides: Partial<TurnState> = {}): TurnState {
   return {
@@ -103,8 +104,8 @@ describe('decideAfterTurn conversation follow-up limit', () => {
     expect(decision.followUpMessage).toBeUndefined()
   })
 
-  it('requests ADR audit for possible-risk turns', () => {
-    const decision = decideAfterTurn(baseTurnState({ risk: 'possible' }), false, config, 0)
+  it('requests ADR audit for possible-risk turns with repository changes', () => {
+    const decision = decideAfterTurn(baseTurnState({ risk: 'possible' }), false, config, 0, true)
     expect(decision.allowFinish).toBe(false)
     expect(decision.followUpMessage).toContain('ADR audit')
   })
@@ -139,9 +140,13 @@ describe('isAuditFollowUpPrompt', () => {
 
 async function setupRepo(prefix: string): Promise<string> {
   const repo = await mkdtemp(path.join(tmpdir(), prefix))
+  initTestGitRepo(repo)
   await writeFile(path.join(repo, 'adr.config.json'), JSON.stringify(defaultConfig(), null, 2))
   await mkdir(path.join(repo, '.adr-governance/state'), { recursive: true })
   await writeFile(path.join(repo, '.adr-governance/manifest.json'), '{}\n')
+  await writeFile(path.join(repo, '.gitignore'), '.adr-governance/state/\n')
+  execFileSync('git', ['add', '.'], { cwd: repo })
+  gitCommit(repo, 'test fixture')
   return repo
 }
 
@@ -175,7 +180,7 @@ async function runBundledHook(
 }
 
 describe('after-turn audit follow-up (no synthetic receipts)', () => {
-  it('requests ADR audit for possible-risk turns', async () => {
+  it('requests ADR audit for possible-risk turns with actual repository changes', async () => {
     const repo = await setupRepo('adr-audit-possible-')
     const conversationId = 'conv-audit-possible'
     const gen1 = 'gen-audit-possible-1'
@@ -190,6 +195,9 @@ describe('after-turn audit follow-up (no synthetic receipts)', () => {
     const stateAfterBefore = await loadTurnStateForSession(repo, gen1)
     expect(stateAfterBefore?.risk).toBe('possible')
 
+    await mkdir(path.join(repo, 'src'), { recursive: true })
+    await writeFile(path.join(repo, 'src', 'label.ts'), 'export const label = "lime"\n')
+
     const after = await runAfterTurn({ cwd: repo, sessionId: gen1, conversationId })
     expect(after.followUpMessage).toContain('ADR audit')
     expect(after.allowFinish).toBe(false)
@@ -197,6 +205,53 @@ describe('after-turn audit follow-up (no synthetic receipts)', () => {
     const stateAfter = await loadTurnStateForSession(repo, gen1)
     expect(stateAfter?.receipt).toBeNull()
     expect(await loadAuditChainForScope(repo, conversationId)).not.toBeNull()
+  })
+
+  it('finishes possible-risk turns when the repository stays unchanged', async () => {
+    const repo = await setupRepo('adr-audit-possible-unchanged-')
+    const conversationId = 'conv-audit-possible-unchanged'
+    const gen1 = 'gen-audit-possible-unchanged-1'
+
+    await runBeforeTurn({
+      cwd: repo,
+      prompt: 'Update the authentication label to ライム',
+      sessionId: gen1,
+      conversationId,
+    })
+
+    const after = await runAfterTurn({ cwd: repo, sessionId: gen1, conversationId })
+    expect(after.allowFinish).toBe(true)
+    expect(after.followUpMessage).toBeUndefined()
+
+    const stateAfter = await loadTurnStateForSession(repo, gen1)
+    expect(stateAfter?.receipt).toBeNull()
+    expect(await loadAuditChainForScope(repo, conversationId)).toBeNull()
+  })
+
+  it('requests ADR audit for none-risk turns with a code change', async () => {
+    const repo = await setupRepo('adr-audit-none-change-')
+    const conversationId = 'conv-audit-none-change'
+    const gen1 = 'gen-audit-none-change-1'
+
+    await runBeforeTurn({
+      cwd: repo,
+      prompt: 'Correct a spelling mistake in the UI copy',
+      sessionId: gen1,
+      conversationId,
+    })
+
+    const stateAfterBefore = await loadTurnStateForSession(repo, gen1)
+    expect(stateAfterBefore?.risk).toBe('none')
+
+    await mkdir(path.join(repo, 'src'), { recursive: true })
+    await writeFile(path.join(repo, 'src', 'copy.ts'), 'export const copy = "corrected"\n')
+
+    const after = await runAfterTurn({ cwd: repo, sessionId: gen1, conversationId })
+    expect(after.allowFinish).toBe(false)
+    expect(after.followUpMessage).toContain('ADR audit')
+
+    const stateAfter = await loadTurnStateForSession(repo, gen1)
+    expect(stateAfter?.receipt).toBeNull()
   })
 
   it('requests ADR audit for likely-risk turns', async () => {
@@ -220,6 +275,74 @@ describe('after-turn audit follow-up (no synthetic receipts)', () => {
 
     const stateAfter = await loadTurnStateForSession(repo, gen1)
     expect(stateAfter?.receipt).toBeNull()
+  })
+
+  it('resolves a pending audit when an accepted ADR is updated', async () => {
+    const repo = await setupRepo('adr-audit-docs-resolution-')
+    const conversationId = 'conv-audit-docs-resolution'
+    const gen1 = 'gen-audit-docs-resolution-1'
+    const gen2 = 'gen-audit-docs-resolution-2'
+
+    await runBeforeTurn({
+      cwd: repo,
+      prompt: 'We need a new database migration for auth architecture',
+      sessionId: gen1,
+      conversationId,
+    })
+    await runAfterTurn({ cwd: repo, sessionId: gen1, conversationId })
+
+    await runBeforeTurn({
+      cwd: repo,
+      prompt: AUDIT_FOLLOWUP_MESSAGE,
+      sessionId: gen2,
+      conversationId,
+    })
+    await mkdir(path.join(repo, 'docs', 'adr', 'accepted'), { recursive: true })
+    await writeFile(
+      path.join(repo, 'docs', 'adr', 'accepted', 'ADR-0001-auth.md'),
+      '---\nstatus: accepted\ndate: 2026-09-03\n---\n\n# Auth\n',
+    )
+
+    const after = await runAfterTurn({ cwd: repo, sessionId: gen2, conversationId })
+    expect(after.allowFinish).toBe(true)
+    expect(after.followUpMessage).toBeUndefined()
+    expect(await loadAuditChainForScope(repo, conversationId)).toBeNull()
+
+    const stateAfter = await loadTurnStateForSession(repo, gen2)
+    expect(stateAfter?.receipt).toBeNull()
+  })
+
+  it('resolves a pending audit when an explicit receipt is recorded', async () => {
+    const repo = await setupRepo('adr-audit-receipt-resolution-')
+    const conversationId = 'conv-audit-receipt-resolution'
+    const gen1 = 'gen-audit-receipt-resolution-1'
+    const gen2 = 'gen-audit-receipt-resolution-2'
+
+    await runBeforeTurn({
+      cwd: repo,
+      prompt: 'We need a new database migration for auth architecture',
+      sessionId: gen1,
+      conversationId,
+    })
+    await runAfterTurn({ cwd: repo, sessionId: gen1, conversationId })
+
+    await runBeforeTurn({
+      cwd: repo,
+      prompt: AUDIT_FOLLOWUP_MESSAGE,
+      sessionId: gen2,
+      conversationId,
+    })
+    await runTurnClose({
+      repoRoot: repo,
+      outcome: 'no-change',
+      reason: 'reversible',
+      sessionId: conversationId,
+    })
+
+    const after = await runAfterTurn({ cwd: repo, sessionId: gen2, conversationId })
+    expect(after.allowFinish).toBe(true)
+    expect(after.followUpMessage).toBeUndefined()
+    expect(await loadAuditChainForScope(repo, conversationId)).toBeNull()
   })
 })
 
