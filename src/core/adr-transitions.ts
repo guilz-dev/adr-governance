@@ -32,7 +32,6 @@ export function validateAuthorityMetadata(
   if (
     isNewOrChanged &&
     status === 'accepted' &&
-    !adr.legacy &&
     !acceptance
   ) {
     issues.push({

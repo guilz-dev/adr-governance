@@ -135,4 +135,22 @@ describe('decision gate classification', () => {
     expect(rejectedResult.issues.some((issue) => issue.code === 'changed-proposal-unreviewed')).toBe(false)
     expect(rejectedResult.issues.some((issue) => issue.code === 'status-path-mismatch')).toBe(false)
   })
+
+  it('fails closed when the base ref has no merge base with HEAD', async () => {
+    const repo = await initRepo()
+    const branch = (await exec('git', ['branch', '--show-current'], { cwd: repo })).stdout.trim()
+    await exec('git', ['checkout', '--orphan', 'unrelated'], { cwd: repo })
+    await exec('git', ['rm', '-rf', '.'], { cwd: repo })
+    await writeFile(path.join(repo, 'unrelated.txt'), 'unrelated history\n')
+    await exec('git', ['add', '.'], { cwd: repo })
+    await exec('git', ['commit', '-m', 'unrelated base'], { cwd: repo })
+    await exec('git', ['checkout', branch], { cwd: repo })
+
+    const result = await runCheck(repo, { baseRef: 'unrelated' })
+
+    expect(result.exitCode).toBe(1)
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({ severity: 'error', code: 'base-ref-unavailable' }),
+    )
+  })
 })

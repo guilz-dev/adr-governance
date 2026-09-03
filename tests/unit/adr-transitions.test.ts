@@ -76,3 +76,24 @@ describe('validateAdrTransitions supersession', () => {
     expect(issueCodes([], [oldAdr, newAdr])).toContain('invalid-supersession')
   })
 })
+
+describe('validateAdrTransitions legacy acceptance metadata', () => {
+  const legacyAccepted = (body: string): ParsedAdr => ({
+    ...adr('ADR-0001', 'accepted', { acceptance: undefined }),
+    body,
+    legacy: true,
+  })
+
+  it('grandfathers an unchanged legacy accepted ADR', () => {
+    const existing = legacyAccepted('Original decision')
+
+    expect(issueCodes([existing], [existing])).not.toContain('accepted-without-acceptance')
+  })
+
+  it('requires acceptance metadata when a legacy accepted ADR changes', () => {
+    const before = legacyAccepted('Original decision')
+    const after = legacyAccepted('Changed decision')
+
+    expect(issueCodes([before], [after])).toContain('accepted-without-acceptance')
+  })
+})

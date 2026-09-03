@@ -22,7 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - decision-gate classification now exempts only concrete governance artifacts and manifest-managed generated files
-- base-corpus read failures are fail-closed in enforce mode
+- base-corpus and base-diff read failures are fail-closed in enforce mode
+- changed legacy accepted ADRs now require acceptance metadata while unchanged legacy ADRs remain grandfathered
+- hook instructions no longer describe the removed synthetic silent-close behavior
 - supersession updates preserve custom frontmatter and roll back partial two-file updates
 
 ## [0.1.11] - 2026-08-26

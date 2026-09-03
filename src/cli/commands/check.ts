@@ -6,6 +6,7 @@ import { validateAdrTransitions } from '../../core/adr-transitions.js'
 import { evaluateChangeGate } from '../../core/change-gate.js'
 import { parseConfig } from '../../core/config.js'
 import {
+  BaseRefUnavailableError,
   buildRefDecisionCorpus,
   hashDecisionCorpus,
 } from '../../core/decision-corpus.js'
@@ -223,9 +224,30 @@ async function checkDecisionAuthority(
     }
   }
 
-  const corpus = await buildRefDecisionCorpus(repoRoot, baseRef, config)
+  let corpus
+  try {
+    corpus = await buildRefDecisionCorpus(repoRoot, baseRef, config)
+  } catch (error) {
+    if (!(error instanceof BaseRefUnavailableError)) throw error
+    issues.push({
+      severity: 'error',
+      code: 'base-ref-unavailable',
+      message: `Could not read decision corpus at base ref ${baseRef}`,
+    })
+    return issues
+  }
   const expectedHash = hashDecisionCorpus(corpus)
-  const changedPaths = await listChangedPaths(repoRoot, baseRef)
+  let changedPaths: string[]
+  try {
+    changedPaths = await listChangedPaths(repoRoot, baseRef)
+  } catch {
+    issues.push({
+      severity: 'error',
+      code: 'base-ref-unavailable',
+      message: `Could not compare changes against base ref ${baseRef}`,
+    })
+    return issues
+  }
   const govPaths = await governanceArtifactPaths(repoRoot, baseRef, config, headAdrs, baseAdrs)
 
   const normalizedChanged = new Set(changedPaths.map((p) => p.replace(/\\/g, '/')))

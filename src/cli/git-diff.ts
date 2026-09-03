@@ -22,12 +22,8 @@ function parsePathList(output: string): string[] {
 export async function listChangedPaths(repoRoot: string, baseRef: string): Promise<string[]> {
   const paths = new Set<string>()
 
-  try {
-    const diff = await git(repoRoot, ['diff', '--name-only', `${baseRef}...HEAD`])
-    for (const p of parsePathList(diff)) paths.add(p)
-  } catch {
-    /* base may not exist in shallow clone; continue with other sources */
-  }
+  const diff = await git(repoRoot, ['diff', '--name-only', `${baseRef}...HEAD`])
+  for (const p of parsePathList(diff)) paths.add(p)
 
   const status = await git(repoRoot, ['status', '--porcelain', '-u', '--untracked-files=all'])
   for (const line of status.split('\n')) {

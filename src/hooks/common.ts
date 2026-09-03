@@ -34,8 +34,8 @@ export function buildFullInstruction(config: AdrConfig, relevantAdrPaths: string
     'Relevant ADRs:',
     paths,
     '',
-    'When the hook silent-closes the turn, no manual turn-close is required.',
-    'Otherwise update ADR/CONTEXT or record a no-ADR reason via turn-close before the turn ends.',
+    'Before finishing, update ADR/CONTEXT or explicitly record a no-ADR reason via turn-close when no ADR is required.',
+    'The after-turn hook may request one audit follow-up but never records a no-ADR reason on your behalf.',
   ].join('\n')
 }
 
