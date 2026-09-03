@@ -34,7 +34,7 @@ Adopt a **Decision Authority Gate** with provider-neutral `DecisionEvidence`, `a
 
 - Config v2 adds `changeGate` with `off` | `warn` | `enforce`.
 - New CLI: `attest`, extended `check --base --evidence` / `--github-event`.
-- Hooks request at most one audit follow-up for unresolved likely risk; CI gate remains authoritative.
+- Hooks request at most one audit follow-up for actual repository changes or unresolved likely risk; CI gate remains authoritative.
 - Self-hosting: this repository applies the gate to its own releases starting v0.2.0.
 
 ## References
