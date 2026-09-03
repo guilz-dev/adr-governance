@@ -93,6 +93,14 @@ export function validateAdrTransitions(
         })
         continue
       }
+      if (adr.frontmatter.status !== 'accepted') {
+        issues.push({
+          severity: 'error',
+          code: 'invalid-supersession',
+          message: `${adr.id} must be accepted before superseding ${targetId}`,
+          path: adr.path,
+        })
+      }
       if (target.frontmatter.status !== 'superseded') {
         issues.push({
           severity: 'error',
@@ -101,8 +109,7 @@ export function validateAdrTransitions(
           path: adr.path,
         })
       }
-      const reciprocal = target.frontmatter.supersedes ?? []
-      if (!reciprocal.includes(adr.id)) {
+      if (target.frontmatter.superseded_by !== adr.id) {
         issues.push({
           severity: 'error',
           code: 'invalid-supersession',
@@ -110,6 +117,44 @@ export function validateAdrTransitions(
           path: adr.path,
         })
       }
+    }
+
+    const supersededBy = adr.frontmatter.superseded_by
+    if (!supersededBy) continue
+
+    const replacement = headById.get(supersededBy)
+    if (!replacement) {
+      issues.push({
+        severity: 'error',
+        code: 'invalid-supersession',
+        message: `${adr.id} is superseded by missing ADR ${supersededBy}`,
+        path: adr.path,
+      })
+      continue
+    }
+    if (adr.frontmatter.status !== 'superseded') {
+      issues.push({
+        severity: 'error',
+        code: 'invalid-supersession',
+        message: `${adr.id} must be superseded before naming ${supersededBy} as its replacement`,
+        path: adr.path,
+      })
+    }
+    if (replacement.frontmatter.status !== 'accepted') {
+      issues.push({
+        severity: 'error',
+        code: 'invalid-supersession',
+        message: `${adr.id} is superseded by ${supersededBy} but its replacement is not accepted`,
+        path: adr.path,
+      })
+    }
+    if (!(replacement.frontmatter.supersedes ?? []).includes(adr.id)) {
+      issues.push({
+        severity: 'error',
+        code: 'invalid-supersession',
+        message: `Supersession is not reciprocal between ${adr.id} and ${supersededBy}`,
+        path: adr.path,
+      })
     }
   }
 
