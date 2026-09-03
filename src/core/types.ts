@@ -135,6 +135,10 @@ export type RepositoryFingerprint = {
   watchGitStatusHash: string
   overflowWatchHash: string
   contentHashes: Record<string, string>
+  /** Present only when a complete bounded Git observation was collected. */
+  repositoryStateHash?: string
+  /** Absent in v0.1.x saved turn state; absence is treated as unavailable. */
+  collectionAvailable?: boolean
 }
 
 export type TurnReceipt = {

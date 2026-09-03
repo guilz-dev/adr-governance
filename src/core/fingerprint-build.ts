@@ -8,6 +8,68 @@ import { isWatchPath } from './risk-signals.js'
 import { sha256 } from './numbering.js'
 
 const MAX_FINGERPRINT_FILES = 500
+const MAX_FINGERPRINT_BYTES = 1024 * 1024
+
+type RepositoryStateObservation = {
+  gitStatusHash: string
+  repositoryStateHash: string
+}
+
+async function runGit(repoRoot: string, args: string[]): Promise<string | null> {
+  try {
+    const { execFile } = await import('node:child_process')
+    const { promisify } = await import('node:util')
+    const exec = promisify(execFile)
+    const { stdout } = await exec('git', args, {
+      cwd: repoRoot,
+      maxBuffer: MAX_FINGERPRINT_BYTES,
+    })
+    return stdout
+  } catch {
+    return null
+  }
+}
+
+async function hashUntrackedFiles(repoRoot: string, status: string): Promise<string | null> {
+  const paths = status
+    .split('\0')
+    .filter((entry) => entry.startsWith('?? '))
+    .map((entry) => entry.slice(3))
+
+  if (paths.length > MAX_FINGERPRINT_FILES) return null
+
+  const hashes: string[] = []
+  for (const rel of paths) {
+    try {
+      const file = path.join(repoRoot, rel)
+      const info = await stat(file)
+      if (!info.isFile() || info.size > MAX_FINGERPRINT_BYTES) return null
+      const content = await readFile(file)
+      hashes.push(`${rel}:${createHash('sha256').update(content).digest('hex')}`)
+    } catch {
+      return null
+    }
+  }
+
+  return sha256(hashes.join('\n'))
+}
+
+async function observeRepositoryState(repoRoot: string): Promise<RepositoryStateObservation | null> {
+  const [status, head, diff] = await Promise.all([
+    runGit(repoRoot, ['status', '--porcelain=v1', '-z', '--untracked-files=all']),
+    runGit(repoRoot, ['rev-parse', 'HEAD']),
+    runGit(repoRoot, ['diff', '--no-ext-diff', '--binary', 'HEAD']),
+  ])
+  if (status === null || head === null || diff === null) return null
+
+  const untrackedHash = await hashUntrackedFiles(repoRoot, status)
+  if (untrackedHash === null) return null
+
+  return {
+    gitStatusHash: createHash('sha256').update(status).digest('hex'),
+    repositoryStateHash: sha256(`${head}\n${diff}\n${untrackedHash}`),
+  }
+}
 
 async function hashWatchFile(repoRoot: string, rel: string): Promise<string | null> {
   const abs = path.join(repoRoot, rel)
@@ -77,7 +139,8 @@ export async function buildRepositoryFingerprint(
     if (hash) contentHashes[rel] = hash
   }
 
-  const gitStatusHash = await readGitStatusHash(repoRoot)
+  const observation = await observeRepositoryState(repoRoot)
+  const gitStatusHash = observation?.gitStatusHash ?? sha256('')
   const watchGitStatusHash = await readWatchPathsGitStatusHash(repoRoot, watchPaths)
   const overflowWatchHash = await hashOverflowWatchPaths(repoRoot, overflowPaths)
 
@@ -87,19 +150,14 @@ export async function buildRepositoryFingerprint(
     watchGitStatusHash,
     overflowWatchHash,
     contentHashes,
+    repositoryStateHash: observation?.repositoryStateHash,
+    collectionAvailable: observation !== null,
   }
 }
 
 export async function readGitStatusHash(repoRoot: string): Promise<string> {
-  try {
-    const { execFile } = await import('node:child_process')
-    const { promisify } = await import('node:util')
-    const exec = promisify(execFile)
-    const { stdout } = await exec('git', ['status', '--porcelain'], { cwd: repoRoot })
-    return createHash('sha256').update(stdout).digest('hex')
-  } catch {
-    return sha256('')
-  }
+  const status = await runGit(repoRoot, ['status', '--porcelain'])
+  return status === null ? sha256('') : createHash('sha256').update(status).digest('hex')
 }
 
 export async function detectDocsPathsUpdated(

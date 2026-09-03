@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { execFileSync, spawn } from 'node:child_process'
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rename, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -150,6 +150,14 @@ async function setupRepo(prefix: string): Promise<string> {
   return repo
 }
 
+async function commitTrackedFile(repo: string, relativePath: string, content: string): Promise<void> {
+  const absolutePath = path.join(repo, relativePath)
+  await mkdir(path.dirname(absolutePath), { recursive: true })
+  await writeFile(absolutePath, content)
+  execFileSync('git', ['add', relativePath], { cwd: repo })
+  gitCommit(repo, `track ${relativePath}`)
+}
+
 async function runBundledHook(
   repo: string,
   runtime: string,
@@ -252,6 +260,87 @@ describe('after-turn audit follow-up (no synthetic receipts)', () => {
 
     const stateAfter = await loadTurnStateForSession(repo, gen1)
     expect(stateAfter?.receipt).toBeNull()
+  })
+
+  it('requests ADR audit when an already-dirty tracked file changes again', async () => {
+    const repo = await setupRepo('adr-audit-dirty-tracked-')
+    const conversationId = 'conv-audit-dirty-tracked'
+    const gen1 = 'gen-audit-dirty-tracked-1'
+    await commitTrackedFile(repo, 'src/app.ts', 'export const version = 1\n')
+    await writeFile(path.join(repo, 'src', 'app.ts'), 'export const version = 2\n')
+
+    await runBeforeTurn({
+      cwd: repo,
+      prompt: 'Correct a spelling mistake in the UI copy',
+      sessionId: gen1,
+      conversationId,
+    })
+    await writeFile(path.join(repo, 'src', 'app.ts'), 'export const version = 3\n')
+
+    const after = await runAfterTurn({ cwd: repo, sessionId: gen1, conversationId })
+    expect(after.allowFinish).toBe(false)
+    expect(after.followUpMessage).toContain('ADR audit')
+  })
+
+  it('requests ADR audit when the turn creates a clean-to-clean commit', async () => {
+    const repo = await setupRepo('adr-audit-clean-commit-')
+    const conversationId = 'conv-audit-clean-commit'
+    const gen1 = 'gen-audit-clean-commit-1'
+    await commitTrackedFile(repo, 'src/app.ts', 'export const version = 1\n')
+
+    await runBeforeTurn({
+      cwd: repo,
+      prompt: 'Correct a spelling mistake in the UI copy',
+      sessionId: gen1,
+      conversationId,
+    })
+    await writeFile(path.join(repo, 'src', 'app.ts'), 'export const version = 2\n')
+    execFileSync('git', ['add', 'src/app.ts'], { cwd: repo })
+    gitCommit(repo, 'turn change')
+
+    const after = await runAfterTurn({ cwd: repo, sessionId: gen1, conversationId })
+    expect(after.allowFinish).toBe(false)
+    expect(after.followUpMessage).toContain('ADR audit')
+  })
+
+  it('requests ADR audit when an already-untracked file changes again', async () => {
+    const repo = await setupRepo('adr-audit-untracked-')
+    const conversationId = 'conv-audit-untracked'
+    const gen1 = 'gen-audit-untracked-1'
+    await mkdir(path.join(repo, 'src'), { recursive: true })
+    await writeFile(path.join(repo, 'src', 'draft.ts'), 'export const version = 1\n')
+
+    await runBeforeTurn({
+      cwd: repo,
+      prompt: 'Correct a spelling mistake in the UI copy',
+      sessionId: gen1,
+      conversationId,
+    })
+    await writeFile(path.join(repo, 'src', 'draft.ts'), 'export const version = 2\n')
+
+    const after = await runAfterTurn({ cwd: repo, sessionId: gen1, conversationId })
+    expect(after.allowFinish).toBe(false)
+    expect(after.followUpMessage).toContain('ADR audit')
+  })
+
+  it('fails open when the after-turn fingerprint cannot be collected', async () => {
+    const repo = await setupRepo('adr-audit-fingerprint-unavailable-')
+    const conversationId = 'conv-audit-fingerprint-unavailable'
+    const gen1 = 'gen-audit-fingerprint-unavailable-1'
+    await mkdir(path.join(repo, 'src'), { recursive: true })
+    await writeFile(path.join(repo, 'src', 'draft.ts'), 'export const version = 1\n')
+
+    await runBeforeTurn({
+      cwd: repo,
+      prompt: 'Update the authentication label to ライム',
+      sessionId: gen1,
+      conversationId,
+    })
+    await rename(path.join(repo, '.git'), path.join(repo, '.git-unavailable'))
+
+    const after = await runAfterTurn({ cwd: repo, sessionId: gen1, conversationId })
+    expect(after.allowFinish).toBe(true)
+    expect(after.followUpMessage).toBeUndefined()
   })
 
   it('requests ADR audit for likely-risk turns', async () => {
