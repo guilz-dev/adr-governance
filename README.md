@@ -14,7 +14,7 @@ The GitHub repository is currently **private**. Source access requires organizat
 - **Repository:** https://github.com/guilz-dev/adr-governance
 - **License:** [MIT](./LICENSE)
 - **Changelog:** [CHANGELOG.md](./CHANGELOG.md)
-- **Design spec:** [guilz monorepo spec](https://github.com/guilz-dev/guilz/blob/develop/docs/superpowers/specs/2026-08-22-adr-governance-design.md)
+- **Design spec:** [docs/specs/adr-governance-design.md](./docs/specs/adr-governance-design.md)
 - **Implementation status:** [docs/IMPLEMENTATION-STATUS.md](./docs/IMPLEMENTATION-STATUS.md)
 
 ## Quick start (target project)

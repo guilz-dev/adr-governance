@@ -5,6 +5,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- provider-neutral decision evidence and `attest` output for accepted-ADR or explicit no-ADR outcomes
+- config v2 `changeGate` policy and `check --base` decision-authority validation
+- decision-corpus freshness, ADR lifecycle-transition, and reciprocal supersession validation
+
+### Changed
+
+- proposed ADRs no longer count as implementation authority
+- after-turn hooks request one bounded audit for actual changes or likely risk without inventing semantic receipts
+- the local design specification is now the authoritative source for this repository
+
+### Fixed
+
+- decision-gate classification now exempts only concrete governance artifacts and manifest-managed generated files
+- base-corpus read failures are fail-closed in enforce mode
+- supersession updates preserve custom frontmatter and roll back partial two-file updates
+
 ## [0.1.11] - 2026-08-26
 
 ### Changed

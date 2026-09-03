@@ -1,6 +1,6 @@
 # Implementation status (vs design spec)
 
-Design spec: `docs/superpowers/specs/2026-08-22-adr-governance-design.md` in the [guilz](https://github.com/guilz-dev/guilz) monorepo.
+Design spec: [`docs/specs/adr-governance-design.md`](./specs/adr-governance-design.md) in this repository. The guilz monorepo copy is historical.
 
 **Current release:** v0.1.11
 

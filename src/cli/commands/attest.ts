@@ -7,7 +7,7 @@ import {
   BaseRefUnavailableError,
 } from '../../core/decision-corpus.js'
 import { contentHashForFile, parseDecisionEvidence, serializeDecisionEvidence } from '../../core/decision-evidence.js'
-import type { AdrConfig, NoAdrReason, ParsedAdr } from '../../core/types.js'
+import type { AdrConfig, NoAdrReason } from '../../core/types.js'
 import { loadAllAdrs } from '../../core/repository-state.js'
 import { refExists } from '../git-diff.js'
 
@@ -78,16 +78,4 @@ export async function runAttest(options: AttestOptions) {
     })),
   }
   return parseDecisionEvidence(JSON.parse(serializeDecisionEvidence(evidence)))
-}
-
-export function buildAcceptedAdrContentHashes(
-  adrs: ParsedAdr[],
-  readContent: (adr: ParsedAdr) => string,
-): Map<string, string> {
-  const map = new Map<string, string>()
-  for (const adr of adrs) {
-    if (adr.frontmatter.status !== 'accepted') continue
-    map.set(adr.id, contentHashForFile(readContent(adr)))
-  }
-  return map
 }

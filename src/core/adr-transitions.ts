@@ -1,7 +1,7 @@
-import type { ParsedAdr } from './types.js'
+import type { AdrStatus, ParsedAdr } from './types.js'
 import type { ValidationIssue } from './validation.js'
 
-const ALLOWED_TRANSITIONS: Record<string, Set<string>> = {
+const ALLOWED_TRANSITIONS: Record<AdrStatus, ReadonlySet<AdrStatus>> = {
   proposed: new Set(['proposed', 'accepted', 'rejected']),
   accepted: new Set(['accepted', 'superseded', 'deprecated']),
   rejected: new Set(['rejected']),

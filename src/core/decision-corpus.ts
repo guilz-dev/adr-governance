@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { readFile, stat } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import type { AdrConfig } from './types.js'
@@ -11,36 +11,27 @@ function normalizeRepoPath(relativePath: string): string {
   return relativePath.split(path.sep).join('/')
 }
 
-async function hashFileAtPath(absPath: string): Promise<string | null> {
-  if (!existsSync(absPath)) return null
-  const s = await stat(absPath)
-  if (!s.isFile()) return null
-  const content = await readFile(absPath, 'utf8')
-  return `sha256:${sha256(content)}`
-}
-
 function isAdrMarkdown(relativePath: string): boolean {
   const name = relativePath.split('/').pop() ?? relativePath
   return name.endsWith('.md') && name !== 'README.md'
 }
 
-function corpusPathCandidates(config: AdrConfig): string[] {
+function corpusDirectories(config: AdrConfig): string[] {
   const dirs = [config.layout.acceptedDir]
   if (config.layout.mode === 'split' || config.layout.acceptedDir !== config.layout.proposedDir) {
     dirs.push(config.layout.proposedDir)
   }
-  return [...dirs, config.layout.contextFile, config.layout.contextMapFile]
+  return dirs
+}
+
+function corpusPathCandidates(config: AdrConfig): string[] {
+  return [...corpusDirectories(config), config.layout.contextFile, config.layout.contextMapFile]
 }
 
 async function listWorkingCorpusPaths(repoRoot: string, config: AdrConfig): Promise<string[]> {
   const paths: string[] = []
-  const dirs = [config.layout.acceptedDir]
-  if (config.layout.mode === 'split' || config.layout.acceptedDir !== config.layout.proposedDir) {
-    dirs.push(config.layout.proposedDir)
-  }
-
   const { readdir } = await import('node:fs/promises')
-  for (const dir of dirs) {
+  for (const dir of corpusDirectories(config)) {
     const abs = path.join(repoRoot, dir)
     if (!existsSync(abs)) continue
     const names = await readdir(abs)
@@ -140,8 +131,4 @@ export function hashDecisionCorpus(entries: DecisionCorpusEntry[]): string {
   const sorted = [...entries].sort((a, b) => a.path.localeCompare(b.path))
   const payload = sorted.map((e) => `${e.path}\0${e.contentHash}\n`).join('')
   return `sha256:${sha256(payload)}`
-}
-
-export async function fileContentHash(repoRoot: string, relativePath: string): Promise<string | null> {
-  return hashFileAtPath(path.join(repoRoot, relativePath))
 }

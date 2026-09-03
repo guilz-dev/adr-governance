@@ -29,7 +29,7 @@ pnpm test
 
 ## Design reference
 
-Behavior and architecture are defined in the [guilz design spec](https://github.com/guilz-dev/guilz/blob/develop/docs/superpowers/specs/2026-08-22-adr-governance-design.md). Implementation status is tracked in [docs/IMPLEMENTATION-STATUS.md](./docs/IMPLEMENTATION-STATUS.md).
+Behavior and architecture are defined in the local [design spec](./docs/specs/adr-governance-design.md). The guilz monorepo copy is a historical pointer only. Implementation status is tracked in [docs/IMPLEMENTATION-STATUS.md](./docs/IMPLEMENTATION-STATUS.md).
 
 ## Pull requests
 

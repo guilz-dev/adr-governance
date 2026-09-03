@@ -20,7 +20,7 @@ import type { ValidationIssue } from '../../core/validation.js'
 import { verifyAllRuntimeHookEntries } from '../../installer/hook-merge.js'
 import { validateContextLinks } from '../../core/context-links.js'
 import { listChangedPaths, readFileAtRef, refExists } from '../git-diff.js'
-import { parseGitHubEventFile } from '../github-evidence.js'
+import { parseGitHubEventEvidence } from '../github-evidence.js'
 
 export type CheckOptions = {
   baseRef?: string
@@ -206,7 +206,7 @@ async function checkDecisionAuthority(
   } else if (options.githubEventPath) {
     try {
       const event = JSON.parse(await readFile(options.githubEventPath, 'utf8'))
-      evidence = parseGitHubEventFile(event)
+      evidence = parseGitHubEventEvidence(event)
       if (!evidence) {
         issues.push({
           severity: config.changeGate.mode === 'warn' ? 'warning' : 'error',

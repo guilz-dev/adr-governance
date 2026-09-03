@@ -23,7 +23,3 @@ export function parseGitHubEventEvidence(raw: unknown): DecisionEvidence | null 
 export function toGitHubMarkdown(evidence: DecisionEvidence): string {
   return ['```adr-governance', serializeDecisionEvidence(evidence), '```'].join('\n')
 }
-
-export function parseGitHubEventFile(rawEvent: unknown): DecisionEvidence | null {
-  return parseGitHubEventEvidence(rawEvent)
-}
