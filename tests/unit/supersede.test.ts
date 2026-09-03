@@ -8,7 +8,13 @@ import { runSupersede } from '../../src/cli/commands/supersede.js'
 import { defaultConfig } from '../../src/core/config.js'
 import { parseFrontmatter } from '../../src/core/lifecycle.js'
 
-async function createSupersessionRepo(newListsOld = false): Promise<{
+type SupersessionFixtureOptions = {
+  oldExtraFrontmatter?: string
+  newExtraFrontmatter?: string
+  newSupersedes?: string
+}
+
+async function createSupersessionRepo(options: SupersessionFixtureOptions = {}): Promise<{
   repo: string
   oldPath: string
   newPath: string
@@ -24,7 +30,7 @@ async function createSupersessionRepo(newListsOld = false): Promise<{
 status: accepted
 date: 2026-01-01
 acceptance: human
----
+${options.oldExtraFrontmatter ?? ''}---
 # Old decision
 
 Old body.
@@ -34,7 +40,7 @@ Old body.
 status: accepted
 date: 2026-02-01
 acceptance: automatic
-${newListsOld ? 'supersedes: ADR-0001\n' : ''}---
+${options.newExtraFrontmatter ?? ''}${options.newSupersedes ? `supersedes: ${options.newSupersedes}\n` : ''}---
 # New decision
 
 New body.
@@ -74,7 +80,7 @@ describe('runSupersede', () => {
   })
 
   it('restores both ADRs when writing the second update fails', async () => {
-    const fixture = await createSupersessionRepo(true)
+    const fixture = await createSupersessionRepo({ newSupersedes: 'ADR-0001' })
     const blockedTempPath = `${fixture.newPath}.${process.pid}.tmp`
     try {
       await mkdir(blockedTempPath)
@@ -87,6 +93,52 @@ describe('runSupersede', () => {
           newAdrId: 'ADR-0002',
         }),
       ).rejects.toThrow()
+
+      await expect(readFile(fixture.oldPath, 'utf8')).resolves.toBe(fixture.oldContent)
+      await expect(readFile(fixture.newPath, 'utf8')).resolves.toBe(fixture.newContent)
+    } finally {
+      await rm(fixture.repo, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves unknown frontmatter fields in both ADR files', async () => {
+    const fixture = await createSupersessionRepo({
+      oldExtraFrontmatter: 'owner: architecture-team\ntags: [legacy, decision]\n',
+      newExtraFrontmatter: 'owner: platform-team\ntags: [current, decision]\n',
+    })
+    try {
+      await runSupersede({
+        repoRoot: fixture.repo,
+        config: defaultConfig(),
+        oldAdrId: 'ADR-0001',
+        newAdrId: 'ADR-0002',
+      })
+
+      await expect(readFile(fixture.oldPath, 'utf8')).resolves.toContain(
+        'owner: architecture-team\ntags: [legacy, decision]\n',
+      )
+      await expect(readFile(fixture.newPath, 'utf8')).resolves.toContain(
+        'owner: platform-team\ntags: [current, decision]\n',
+      )
+    } finally {
+      await rm(fixture.repo, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    ['a missing existing supersession target', 'ADR-9999'],
+    ['a self-referential existing supersession target', 'ADR-0002'],
+  ])('rejects a candidate containing %s before either file changes', async (_label, newSupersedes) => {
+    const fixture = await createSupersessionRepo({ newSupersedes })
+    try {
+      await expect(
+        runSupersede({
+          repoRoot: fixture.repo,
+          config: defaultConfig(),
+          oldAdrId: 'ADR-0001',
+          newAdrId: 'ADR-0002',
+        }),
+      ).rejects.toThrow('Supersession validation failed')
 
       await expect(readFile(fixture.oldPath, 'utf8')).resolves.toBe(fixture.oldContent)
       await expect(readFile(fixture.newPath, 'utf8')).resolves.toBe(fixture.newContent)
