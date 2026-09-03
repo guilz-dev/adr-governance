@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { execFileSync, spawn } from 'node:child_process'
-import { mkdtemp, mkdir, rename, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rename, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -387,10 +387,14 @@ describe('after-turn audit follow-up (no synthetic receipts)', () => {
       conversationId,
     })
     await mkdir(path.join(repo, 'docs', 'adr', 'accepted'), { recursive: true })
+    const adrPath = path.join(repo, 'docs', 'adr', 'accepted', 'ADR-0001-auth.md')
     await writeFile(
-      path.join(repo, 'docs', 'adr', 'accepted', 'ADR-0001-auth.md'),
+      adrPath,
       '---\nstatus: accepted\ndate: 2026-09-03\n---\n\n# Auth\n',
     )
+    const stateBeforeAfterTurn = await loadTurnStateForSession(repo, gen2)
+    const coarseMtime = new Date(Date.parse(stateBeforeAfterTurn!.createdAt) - 500)
+    await utimes(adrPath, coarseMtime, coarseMtime)
 
     const after = await runAfterTurn({ cwd: repo, sessionId: gen2, conversationId })
     expect(after.allowFinish).toBe(true)

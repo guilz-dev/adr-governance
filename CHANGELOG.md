@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - base-corpus and base-diff read failures are fail-closed in enforce mode
 - changed legacy accepted ADRs now require acceptance metadata while unchanged legacy ADRs remain grandfathered
 - hook instructions no longer describe the removed synthetic silent-close behavior
+- after-turn detects ADR updates on filesystems that round modification times to whole seconds
 - supersession updates preserve custom frontmatter and roll back partial two-file updates
 
 ## [0.1.11] - 2026-08-26
