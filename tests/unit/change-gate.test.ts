@@ -8,17 +8,30 @@ import type { DecisionEvidence } from '../../src/core/decision-evidence.js'
 describe('change-gate', () => {
   const config = defaultConfig()
 
-  it('passes docs-only changes without evidence', () => {
+  it('passes a concrete ADR artifact without evidence', () => {
     const issues = evaluateChangeGate({
       config,
       changedPaths: ['docs/adr/0001-foo.md'],
-      governancePaths: ['docs/adr', 'docs/proposed-adr', 'CONTEXT.md'],
+      governancePaths: ['docs/adr/0001-foo.md', 'CONTEXT.md'],
       changedProposedAdrs: [],
       adrContentHashes: new Map(),
       expectedDecisionCorpusHash: 'sha256:' + 'a'.repeat(64),
       evidence: null,
     })
     expect(issues).toHaveLength(0)
+  })
+
+  it('requires evidence for a non-ADR file beneath an ADR directory', () => {
+    const issues = evaluateChangeGate({
+      config,
+      changedPaths: ['docs/adr/implementation.ts'],
+      governancePaths: ['docs/adr/0001-foo.md', 'CONTEXT.md'],
+      changedProposedAdrs: [],
+      adrContentHashes: new Map(),
+      expectedDecisionCorpusHash: 'sha256:' + 'a'.repeat(64),
+      evidence: null,
+    })
+    expect(issues.some((i) => i.code === 'decision-evidence-required')).toBe(true)
   })
 
   it('requires evidence for code changes', () => {

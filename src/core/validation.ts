@@ -50,7 +50,11 @@ export function validateAdrFile(
   const acceptedStatuses = new Set(['accepted', 'superseded', 'deprecated'])
   const proposedStatuses = new Set(['proposed', 'rejected'])
 
-  if (directory === 'accepted' && !acceptedStatuses.has(frontmatter.status)) {
+  if (
+    config.layout.mode !== 'single' &&
+    directory === 'accepted' &&
+    !acceptedStatuses.has(frontmatter.status)
+  ) {
     issues.push({
       severity: 'error',
       code: 'status-path-mismatch',
@@ -59,7 +63,11 @@ export function validateAdrFile(
     })
   }
 
-  if (directory === 'proposed' && !proposedStatuses.has(frontmatter.status)) {
+  if (
+    config.layout.mode !== 'single' &&
+    directory === 'proposed' &&
+    !proposedStatuses.has(frontmatter.status)
+  ) {
     issues.push({
       severity: 'error',
       code: 'status-path-mismatch',

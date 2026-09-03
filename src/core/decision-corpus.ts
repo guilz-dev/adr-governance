@@ -7,16 +7,6 @@ import { sha256 } from './numbering.js'
 
 export type DecisionCorpusEntry = { path: string; contentHash: string }
 
-export function governancePaths(config: AdrConfig): string[] {
-  const paths = new Set<string>([
-    config.layout.acceptedDir,
-    config.layout.proposedDir,
-    config.layout.contextFile,
-    config.layout.contextMapFile,
-  ])
-  return [...paths].sort()
-}
-
 function normalizeRepoPath(relativePath: string): string {
   return relativePath.split(path.sep).join('/')
 }

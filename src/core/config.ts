@@ -70,7 +70,7 @@ function parseChangeGate(raw: unknown, version: number): AdrConfig['changeGate']
   const gate = defaultChangeGate(version === 1 ? { mode: 'off' } : {})
   if (!raw || typeof raw !== 'object') return gate
   const obj = raw as Record<string, unknown>
-  if (obj.mode === 'off' || obj.mode === 'warn' || obj.mode === 'enforce') {
+  if (version !== 1 && (obj.mode === 'off' || obj.mode === 'warn' || obj.mode === 'enforce')) {
     gate.mode = obj.mode
   }
   if (Array.isArray(obj.exemptPaths)) {
@@ -80,6 +80,19 @@ function parseChangeGate(raw: unknown, version: number): AdrConfig['changeGate']
     gate.requireNoAdrRationale = obj.requireNoAdrRationale
   }
   return gate
+}
+
+function warnUnknownNestedKeys(
+  warnings: string[],
+  section: string,
+  raw: unknown,
+  knownKeys: readonly string[],
+): void {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return
+  const known = new Set(knownKeys)
+  for (const key of Object.keys(raw as Record<string, unknown>)) {
+    if (!known.has(key)) warnings.push(`Unknown config key: ${section}.${key}`)
+  }
 }
 
 export function parseConfig(raw: unknown): { config: AdrConfig; warnings: string[] } {
@@ -117,6 +130,32 @@ export function parseConfig(raw: unknown): { config: AdrConfig; warnings: string
   if (version === 1) {
     warnings.push('Config v1 detected; changeGate defaults to off until migration to v2')
   }
+
+  warnUnknownNestedKeys(warnings, 'layout', obj.layout, [
+    'mode',
+    'acceptedDir',
+    'proposedDir',
+    'contextFile',
+    'contextMapFile',
+  ])
+  warnUnknownNestedKeys(warnings, 'promotion', obj.promotion, ['requireHumanAcceptance'])
+  warnUnknownNestedKeys(warnings, 'documents', obj.documents, [
+    'language',
+    'idDigits',
+    'allowAcceptedClarifications',
+    'legacyFrontmatter',
+  ])
+  warnUnknownNestedKeys(warnings, 'hooks', obj.hooks, ['enabled', 'afterTurnAudit', 'maxFollowUps'])
+  warnUnknownNestedKeys(warnings, 'changeGate', obj.changeGate, [
+    'mode',
+    'exemptPaths',
+    'requireNoAdrRationale',
+  ])
+  warnUnknownNestedKeys(warnings, 'analysis', obj.analysis, [
+    'maxFiles',
+    'maxBytesPerFile',
+    'exclude',
+  ])
 
   const config = defaultConfig({ version })
   if (obj.$schema !== undefined) {

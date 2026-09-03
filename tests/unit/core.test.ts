@@ -28,10 +28,26 @@ describe('config', () => {
   })
 
   it('maps v1 config to gate off with migration warning', () => {
-    const { config, warnings } = parseConfig({ version: 1 })
+    const { config, warnings } = parseConfig({
+      version: 1,
+      changeGate: { mode: 'enforce' },
+    })
     expect(config.version).toBe(1)
     expect(config.changeGate.mode).toBe('off')
     expect(warnings.some((w) => w.includes('v1'))).toBe(true)
+  })
+
+  it('warns about unknown nested config keys while retaining supported settings', () => {
+    const { config, warnings } = parseConfig({
+      version: 2,
+      layout: { mode: 'single', unknownLayoutSetting: true },
+      changeGate: { mode: 'warn', unknownGateSetting: true },
+    })
+
+    expect(config.layout.mode).toBe('single')
+    expect(config.changeGate.mode).toBe('warn')
+    expect(warnings).toContain('Unknown config key: layout.unknownLayoutSetting')
+    expect(warnings).toContain('Unknown config key: changeGate.unknownGateSetting')
   })
 
   it('supports single dir layout', () => {

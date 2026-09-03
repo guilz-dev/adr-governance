@@ -7,7 +7,6 @@ import { evaluateChangeGate } from '../../core/change-gate.js'
 import { parseConfig } from '../../core/config.js'
 import {
   buildRefDecisionCorpus,
-  governancePaths,
   hashDecisionCorpus,
 } from '../../core/decision-corpus.js'
 import { contentHashForFile, parseDecisionEvidence } from '../../core/decision-evidence.js'
@@ -227,18 +226,13 @@ async function checkDecisionAuthority(
   const corpus = await buildRefDecisionCorpus(repoRoot, baseRef, config)
   const expectedHash = hashDecisionCorpus(corpus)
   const changedPaths = await listChangedPaths(repoRoot, baseRef)
-  const govPaths = governancePaths(config)
+  const govPaths = await governanceArtifactPaths(repoRoot, baseRef, config, headAdrs, baseAdrs)
 
-  const baseByPath = new Map(baseAdrs.map((a) => [a.path, a]))
   const normalizedChanged = new Set(changedPaths.map((p) => p.replace(/\\/g, '/')))
   const changedProposed = headAdrs.filter((adr) => {
-    if (adr.directory !== 'proposed') return false
+    if (adr.frontmatter.status !== 'proposed') return false
     const normalizedPath = adr.path.replace(/\\/g, '/')
-    if (normalizedChanged.has(normalizedPath)) return true
-    const base = baseByPath.get(adr.path)
-    if (!base) return true
-    if (base.frontmatter.status !== adr.frontmatter.status) return true
-    return base.body !== adr.body
+    return normalizedChanged.has(normalizedPath)
   })
 
   const adrContentHashes = new Map<string, string>()
@@ -263,6 +257,43 @@ async function checkDecisionAuthority(
   )
 
   return issues
+}
+
+async function governanceArtifactPaths(
+  repoRoot: string,
+  baseRef: string,
+  config: Awaited<ReturnType<typeof parseConfig>>['config'],
+  headAdrs: ParsedAdr[],
+  baseAdrs: ParsedAdr[],
+): Promise<string[]> {
+  const paths = new Set<string>([
+    MANIFEST_PATH,
+    config.layout.contextFile,
+    config.layout.contextMapFile,
+  ])
+
+  for (const adr of [...headAdrs, ...baseAdrs]) {
+    paths.add(adr.path.replace(/\\/g, '/'))
+  }
+
+  const addManifestFiles = (raw: string | null): void => {
+    if (!raw) return
+    try {
+      const manifest = JSON.parse(raw) as { files?: Record<string, unknown> }
+      for (const rel of Object.keys(manifest.files ?? {})) paths.add(rel.replace(/\\/g, '/'))
+    } catch {
+      // Manifest validity is reported separately; it must not widen the exemption set.
+    }
+  }
+
+  try {
+    addManifestFiles(await readFile(path.join(repoRoot, MANIFEST_PATH), 'utf8'))
+  } catch {
+    // The manifest may be absent or unreadable in the working tree.
+  }
+  addManifestFiles(await readFileAtRef(repoRoot, baseRef, MANIFEST_PATH))
+
+  return [...paths]
 }
 
 async function loadAdrsAtRef(

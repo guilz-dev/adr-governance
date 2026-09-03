@@ -29,11 +29,7 @@ function isGovernancePath(relativePath: string, governancePaths: string[]): bool
   const normalized = normalizePath(relativePath)
   for (const gov of governancePaths) {
     const g = normalizePath(gov)
-    if (g.endsWith('/')) {
-      if (normalized.startsWith(g)) return true
-    } else if (normalized === g || normalized.startsWith(`${g}/`)) {
-      return true
-    }
+    if (normalized === g) return true
   }
   return false
 }
