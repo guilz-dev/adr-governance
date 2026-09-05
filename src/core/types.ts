@@ -24,6 +24,12 @@ export type ChangeGateConfig = {
   exemptPaths: string[]
 }
 
+export type RiskSignalsConfig = {
+  highSignalTerms?: string[]
+  additionalTerms?: string[]
+  watchPaths?: string[]
+}
+
 export type AdrConfig = {
   $schema?: string
   version: number
@@ -50,6 +56,7 @@ export type AdrConfig = {
     timeoutMs: number
   }
   changeGate: ChangeGateConfig
+  riskSignals?: RiskSignalsConfig
   analysis: {
     maxFiles: number
     maxBytesPerFile: number

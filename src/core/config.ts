@@ -1,4 +1,4 @@
-import type { AdrConfig } from './types.js'
+import type { AdrConfig, RiskSignalsConfig } from './types.js'
 import { SUPPORTED_CONFIG_VERSION, SUPPORTED_CONFIG_VERSIONS } from './types.js'
 
 function defaultChangeGate(
@@ -9,6 +9,38 @@ function defaultChangeGate(
     exemptPaths: [],
     ...overrides,
   }
+}
+
+function parseRiskSignals(raw: unknown): RiskSignalsConfig | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const obj = raw as Record<string, unknown>
+  const riskSignals: RiskSignalsConfig = {}
+
+  if (Array.isArray(obj.highSignalTerms)) {
+    riskSignals.highSignalTerms = obj.highSignalTerms.filter(
+      (x): x is string => typeof x === 'string' && x.trim().length > 0,
+    )
+  }
+  if (Array.isArray(obj.additionalTerms)) {
+    riskSignals.additionalTerms = obj.additionalTerms.filter(
+      (x): x is string => typeof x === 'string' && x.trim().length > 0,
+    )
+  }
+  if (Array.isArray(obj.watchPaths)) {
+    riskSignals.watchPaths = obj.watchPaths.filter(
+      (x): x is string => typeof x === 'string' && x.trim().length > 0,
+    )
+  }
+
+  if (
+    riskSignals.highSignalTerms === undefined &&
+    riskSignals.additionalTerms === undefined &&
+    riskSignals.watchPaths === undefined
+  ) {
+    return undefined
+  }
+
+  return riskSignals
 }
 
 export function defaultConfig(overrides: Partial<AdrConfig> = {}): AdrConfig {
@@ -63,6 +95,7 @@ export function defaultConfig(overrides: Partial<AdrConfig> = {}): AdrConfig {
     hooks: { ...base.hooks, ...overrides.hooks },
     changeGate: { ...base.changeGate, ...overrides.changeGate },
     analysis: { ...base.analysis, ...overrides.analysis },
+    riskSignals: overrides.riskSignals,
   }
 }
 
@@ -108,6 +141,7 @@ export function parseConfig(raw: unknown): { config: AdrConfig; warnings: string
     'hooks',
     'changeGate',
     'analysis',
+    'riskSignals',
   ])
 
   for (const key of Object.keys(obj)) {
@@ -153,6 +187,11 @@ export function parseConfig(raw: unknown): { config: AdrConfig; warnings: string
     'maxFiles',
     'maxBytesPerFile',
     'exclude',
+  ])
+  warnUnknownNestedKeys(warnings, 'riskSignals', obj.riskSignals, [
+    'highSignalTerms',
+    'additionalTerms',
+    'watchPaths',
   ])
 
   const config = defaultConfig({ version })
@@ -216,6 +255,8 @@ export function parseConfig(raw: unknown): { config: AdrConfig; warnings: string
       config.analysis.exclude = a.exclude.filter((x): x is string => typeof x === 'string')
     }
   }
+
+  config.riskSignals = parseRiskSignals(obj.riskSignals)
 
   return { config, warnings }
 }

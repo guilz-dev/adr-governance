@@ -16,6 +16,8 @@ Design spec: [`docs/specs/adr-governance-design.md`](./specs/adr-governance-desi
 | Self-hosted PR gate (`adr-governance.yml`, warn mode) | Done |
 | Security / privacy integration tests | Done |
 | Config v2 without `requireNoAdrRationale` | Done |
+| Configurable `riskSignals` terms and watch paths | Done |
+| Cursor elevated-risk rule workaround (current-turn ADR paths) | Done |
 
 ### Enforce dogfooding criteria (warn → enforce)
 

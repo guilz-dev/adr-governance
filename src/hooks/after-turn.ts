@@ -74,7 +74,11 @@ export async function runAfterTurn(input: AfterTurnInput): Promise<AfterTurnResu
     docsUpdated = false
   }
 
-  const afterFingerprint = await buildRepositoryFingerprint(repoRoot, await gitLsFiles(repoRoot))
+  const afterFingerprint = await buildRepositoryFingerprint(
+    repoRoot,
+    await gitLsFiles(repoRoot),
+    config,
+  )
   const repositoryChanged = repositoryFingerprintChanged(state.beforeFingerprint, afterFingerprint)
 
   const decision = decideAfterTurn(

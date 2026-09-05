@@ -448,11 +448,14 @@ risk判定はADR要否の最終判断ではない。hookはSkillを呼ぶべき�
 
 ### 9.2 risk signal
 
-既定のhigh-signal語には、architecture、boundary、database、storage、migration、auth、permission、API contract、event、queue、provider、deployment、infrastructure、dependency、monorepo、deprecation、delete policy、および設定言語に対応する語を含める。
+既定のhigh-signal語には、architecture、boundary、database、storage、migration、auth、permission、API contract、event、queue、provider、deployment、infrastructure、dependency、monorepo、deprecation、delete policy、および英日両方の語を含める。英語語は語境界（alias付き）で評価し、`author` などの部分一致誤検出を避ける。
+
+`adr.config.json` の `riskSignals` で `highSignalTerms`（既定置換）、`additionalTerms`（追記）、`watchPaths`（既定監視pathへの追記）を任意設定できる。
 
 既定の監視pathには次を含める。
 
 - package/workspace manifestとlockfile
+- Python / Go / Rust / JVM / Ruby manifest
 - DB schemaとmigration
 - API/public contract/schema
 - auth/permission/policy
@@ -460,7 +463,7 @@ risk判定はADR要否の最終判断ではない。hookはSkillを呼ぶべき�
 - infra/deploy/CI
 - トップレベルのpackageまたはapplication境界設定
 
-riskが `none` の場合は短い常駐通知だけを渡す。`possible` または `likely` の場合は、設定、文書path、関連ADR、3条件、turn終了前の監査指示を渡す。
+riskが `none` の場合は短い常駐通知だけを渡す。`possible` または `likely` の場合は、設定、文書path、関連ADR、3条件、turn終了前の監査指示を渡す。Cursor は before-turn hook が context を返せないため、`.cursor/rules/adr-governance.mdc` が `.adr-governance/state/current-turn/` の elevated risk と `relevantAdrPaths` を読ませる。
 
 ### 9.3 Agentの判断
 

@@ -25,6 +25,14 @@
         "exemptPaths": { "type": "array", "items": { "type": "string" } }
       }
     },
+    "riskSignals": {
+      "type": "object",
+      "properties": {
+        "highSignalTerms": { "type": "array", "items": { "type": "string" } },
+        "additionalTerms": { "type": "array", "items": { "type": "string" } },
+        "watchPaths": { "type": "array", "items": { "type": "string" } }
+      }
+    },
     "configV1": {
       "type": "object",
       "required": ["version", "layout", "promotion", "documents", "hooks", "analysis"],
@@ -92,6 +100,7 @@
           }
         },
         "changeGate": { "$ref": "#/$defs/changeGate" },
+        "riskSignals": { "$ref": "#/$defs/riskSignals" },
         "analysis": {
           "type": "object",
           "properties": {

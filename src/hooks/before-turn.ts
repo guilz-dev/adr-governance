@@ -80,7 +80,7 @@ export async function runBeforeTurn(input: BeforeTurnInput): Promise<BeforeTurnR
   const relevant = isAuditFollowUp ? [] : rankRelevantAdrs(input.prompt, adrs)
 
   const tracked = await gitLsFiles(repoRoot)
-  const beforeFingerprint = await buildRepositoryFingerprint(repoRoot, tracked)
+  const beforeFingerprint = await buildRepositoryFingerprint(repoRoot, tracked, config)
   const degradationReason = beforeFingerprint.degradationReason
   const shouldWarnDegradation = degradationReason !== undefined
 

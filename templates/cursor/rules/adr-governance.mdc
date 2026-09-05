@@ -5,7 +5,10 @@ alwaysApply: true
 
 ADR governance is active.
 
-When `.adr-governance/state/current-turn/` reports elevated `risk` for this session,
-read `.agents/skills/managing-adrs/SKILL.md` completely and follow it.
+When a pointer file under `.adr-governance/state/current-turn/` reports elevated `risk` (`possible` or `likely`) for this session:
+
+1. Read `.agents/skills/managing-adrs/SKILL.md` completely and follow it.
+2. Open the referenced `turnStatePath` from that pointer and read every path listed in `relevantAdrPaths`.
+3. Apply the three ADR criteria before making design decisions and keep CONTEXT aligned.
 
 Otherwise, apply the three ADR criteria when making design decisions and keep CONTEXT aligned.

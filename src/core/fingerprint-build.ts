@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 
-import type { FingerprintCollectionMode, RepositoryFingerprint } from './types.js'
+import type { AdrConfig, FingerprintCollectionMode, RepositoryFingerprint } from './types.js'
 import { isWatchPath } from './risk-signals.js'
 import { sha256 } from './numbering.js'
 
@@ -167,8 +167,9 @@ async function hashOverflowWatchPaths(
 export async function buildRepositoryFingerprint(
   repoRoot: string,
   trackedRelativePaths: string[],
+  config?: AdrConfig,
 ): Promise<RepositoryFingerprint> {
-  const watchPaths = trackedRelativePaths.filter(isWatchPath)
+  const watchPaths = trackedRelativePaths.filter((rel) => isWatchPath(rel, config))
   const truncated = watchPaths.length > MAX_FINGERPRINT_FILES
   const selected = truncated ? watchPaths.slice(0, MAX_FINGERPRINT_FILES) : watchPaths
   const overflowPaths = truncated ? watchPaths.slice(MAX_FINGERPRINT_FILES) : []
