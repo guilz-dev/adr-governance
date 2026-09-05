@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "node .cursor/hooks/adr-governance.mjs session-start"
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "node .cursor/hooks/adr-governance.mjs before-turn"
+      }
+    ],
+    "stop": [
+      {
+        "command": "node .cursor/hooks/adr-governance.mjs after-turn",
+        "loop_limit": 1
+      }
+    ]
+  }
+}

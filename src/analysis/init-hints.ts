@@ -51,13 +51,28 @@ on:
   push:
     branches: [main, develop]
 jobs:
-  adr-check:
+  adr-check-pr:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: >-
+          node .adr-governance/bin/cli.mjs check
+          --base "\${{ github.event.pull_request.base.sha }}"
+          --github-event "$GITHUB_EVENT_PATH"
+  adr-check-push:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-      - run: node .adr-governance/bin/cli.mjs check --base origin/main
+          node-version: '20'
+      - run: node .adr-governance/bin/cli.mjs check
 `
 }

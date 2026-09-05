@@ -18,7 +18,7 @@
     "legacyFrontmatter": false
   },
   "hooks": {
-    "enabled": false,
+    "enabled": true,
     "afterTurnAudit": true,
     "maxFollowUps": 1,
     "timeoutMs": 1500

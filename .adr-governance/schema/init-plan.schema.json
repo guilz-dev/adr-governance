@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ADR Governance Init Plan",
+  "type": "object",
+  "required": ["schemaVersion", "planId", "proposedConfig", "operations"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "planId": { "type": "string" },
+    "proposedConfig": { "type": "object" },
+    "operations": { "type": "array" }
+  }
+}
