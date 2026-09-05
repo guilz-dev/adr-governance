@@ -148,7 +148,7 @@ export type TurnReceipt = {
 }
 
 export type TurnState = {
-  schemaVersion: 1
+  schemaVersion: 1 | 2
   sessionId: string
   turnId: string
   conversationId?: string
@@ -157,6 +157,8 @@ export type TurnState = {
   risk: RiskLevel
   signals: string[]
   beforeFingerprint: RepositoryFingerprint
+  beforeDecisionCorpus?: import('./decision-corpus.js').DecisionCorpusSnapshot
+  changedDecisionCorpusPaths?: string[]
   relevantAdrPaths: string[]
   followUpCount: number
   receipt: TurnReceipt | null

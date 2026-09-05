@@ -2,7 +2,6 @@ import { watchPathsChanged } from './risk-signals.js'
 
 export {
   buildRepositoryFingerprint,
-  detectDocsPathsUpdated,
   readGitStatusHash,
 } from './fingerprint-build.js'
 

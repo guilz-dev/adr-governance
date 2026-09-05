@@ -9,7 +9,6 @@ import { sha256 } from './numbering.js'
 
 const MAX_FINGERPRINT_FILES = 500
 const MAX_FINGERPRINT_BYTES = 1024 * 1024
-const FILESYSTEM_MTIME_TOLERANCE_MS = 1000
 
 type RepositoryStateObservation = {
   gitStatusHash: string
@@ -159,47 +158,4 @@ export async function buildRepositoryFingerprint(
 export async function readGitStatusHash(repoRoot: string): Promise<string> {
   const status = await runGit(repoRoot, ['status', '--porcelain'])
   return status === null ? sha256('') : createHash('sha256').update(status).digest('hex')
-}
-
-export async function detectDocsPathsUpdated(
-  repoRoot: string,
-  paths: string[],
-  sinceIso: string,
-): Promise<boolean> {
-  // Some CI/container filesystems expose mtimes at one-second resolution.
-  // Include that rounding window so a file written after the turn started is
-  // not missed merely because its mtime was rounded down.
-  const since = new Date(sinceIso).getTime() - FILESYSTEM_MTIME_TOLERANCE_MS
-
-  for (const rel of paths) {
-    const abs = path.join(repoRoot, rel)
-    if (!existsSync(abs)) continue
-    const updated = await pathTreeUpdatedSince(abs, since)
-    if (updated) return true
-  }
-  return false
-}
-
-async function pathTreeUpdatedSince(absPath: string, since: number): Promise<boolean> {
-  const { readdir, stat: statFile } = await import('node:fs/promises')
-  let s
-  try {
-    s = await statFile(absPath)
-  } catch {
-    return false
-  }
-
-  if (s.isFile()) {
-    return s.mtimeMs >= since
-  }
-
-  if (!s.isDirectory()) return false
-
-  const entries = await readdir(absPath, { withFileTypes: true })
-  for (const entry of entries) {
-    if (entry.name === 'README.md') continue
-    const child = path.join(absPath, entry.name)
-    if (await pathTreeUpdatedSince(child, since)) return true
-  }
-  return false
 }

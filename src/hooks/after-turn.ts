@@ -2,14 +2,11 @@ import { writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { parseConfig } from '../core/config.js'
+import { buildWorkingDecisionCorpus, changedDecisionCorpusPaths, snapshotDecisionCorpus } from '../core/decision-corpus.js'
 import { findRepoRoot, readConfig, STATE_DIR } from '../core/repository-state.js'
 import { decideAfterTurn } from './common.js'
 import { loadCurrentTurnState } from './before-turn.js'
-import {
-  buildRepositoryFingerprint,
-  detectDocsPathsUpdated,
-  repositoryFingerprintChanged,
-} from '../core/fingerprint.js'
+import { buildRepositoryFingerprint, repositoryFingerprintChanged } from '../core/fingerprint.js'
 import { gitLsFiles } from '../cli/git.js'
 import {
   incrementAuditChainFollowUpForScope,
@@ -58,14 +55,25 @@ export async function runAfterTurn(input: AfterTurnInput): Promise<AfterTurnResu
   const auditChain = await loadAuditChainForScope(repoRoot, conversationId)
   const conversationFollowUpCount = auditChain?.followUpCount ?? 0
 
-  const docPaths = [
-    config.layout.acceptedDir,
-    config.layout.proposedDir,
-    config.layout.contextFile,
-    config.layout.contextMapFile,
-  ]
+  let docsUpdated = false
+  let warning: string | undefined
+  if (state.beforeDecisionCorpus) {
+    const afterDecisionCorpus = snapshotDecisionCorpus(
+      await buildWorkingDecisionCorpus(repoRoot, config),
+    )
+    docsUpdated = state.beforeDecisionCorpus.hash !== afterDecisionCorpus.hash
+    if (docsUpdated) {
+      state.changedDecisionCorpusPaths = changedDecisionCorpusPaths(
+        state.beforeDecisionCorpus,
+        afterDecisionCorpus,
+      )
+    }
+  } else {
+    warning =
+      'Legacy turn state without decision corpus snapshot; docs update not verified (fail-open)'
+    docsUpdated = false
+  }
 
-  const docsUpdated = await detectDocsPathsUpdated(repoRoot, docPaths, state.createdAt)
   const afterFingerprint = await buildRepositoryFingerprint(repoRoot, await gitLsFiles(repoRoot))
   const repositoryChanged = repositoryFingerprintChanged(state.beforeFingerprint, afterFingerprint)
 
@@ -89,5 +97,8 @@ export async function runAfterTurn(input: AfterTurnInput): Promise<AfterTurnResu
     await incrementAuditChainFollowUpForScope(repoRoot, conversationId, state.turnId)
   }
 
-  return decision
+  return {
+    ...decision,
+    warning: warning ?? decision.warning,
+  }
 }
