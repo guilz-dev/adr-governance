@@ -36,6 +36,7 @@ export function defaultConfig(overrides: Partial<AdrConfig> = {}): AdrConfig {
       enabled: true,
       afterTurnAudit: true,
       maxFollowUps: 1,
+      timeoutMs: 1500,
     },
     changeGate: defaultChangeGate(),
     analysis: {
@@ -145,7 +146,12 @@ export function parseConfig(raw: unknown): { config: AdrConfig; warnings: string
     'allowAcceptedClarifications',
     'legacyFrontmatter',
   ])
-  warnUnknownNestedKeys(warnings, 'hooks', obj.hooks, ['enabled', 'afterTurnAudit', 'maxFollowUps'])
+  warnUnknownNestedKeys(warnings, 'hooks', obj.hooks, [
+    'enabled',
+    'afterTurnAudit',
+    'maxFollowUps',
+    'timeoutMs',
+  ])
   warnUnknownNestedKeys(warnings, 'changeGate', obj.changeGate, [
     'mode',
     'exemptPaths',
@@ -199,6 +205,12 @@ export function parseConfig(raw: unknown): { config: AdrConfig; warnings: string
     if (typeof h.enabled === 'boolean') config.hooks.enabled = h.enabled
     if (typeof h.afterTurnAudit === 'boolean') config.hooks.afterTurnAudit = h.afterTurnAudit
     if (typeof h.maxFollowUps === 'number') config.hooks.maxFollowUps = h.maxFollowUps
+  if (typeof h.timeoutMs === 'number') {
+    if (h.timeoutMs < 100 || h.timeoutMs > 1900) {
+      throw new Error('hooks.timeoutMs must be between 100 and 1900')
+    }
+    config.hooks.timeoutMs = h.timeoutMs
+  }
   }
 
   config.changeGate = parseChangeGate(obj.changeGate, version)

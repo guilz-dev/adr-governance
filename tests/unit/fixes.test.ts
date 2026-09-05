@@ -409,6 +409,11 @@ describe('cursor hook wrapper stdin', () => {
       path.join(repo, '.adr-governance/bin/hook.mjs'),
       await readFile(hookSrc, 'utf8'),
     )
+    const runnerSrc = path.resolve(import.meta.dirname, '../../templates/shared/hook-shim-runner.mjs')
+    await writeFile(
+      path.join(repo, '.adr-governance/bin/hook-shim-runner.mjs'),
+      await readFile(runnerSrc, 'utf8'),
+    )
     await writeFile(
       path.join(repo, '.cursor/hooks/adr-governance.mjs'),
       await readFile(wrapperSrc, 'utf8'),

@@ -20,7 +20,8 @@
   "hooks": {
     "enabled": false,
     "afterTurnAudit": true,
-    "maxFollowUps": 1
+    "maxFollowUps": 1,
+    "timeoutMs": 1500
   },
   "changeGate": {
     "mode": "warn",

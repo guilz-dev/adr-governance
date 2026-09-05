@@ -50,7 +50,8 @@
           "properties": {
             "enabled": { "type": "boolean" },
             "afterTurnAudit": { "type": "boolean" },
-            "maxFollowUps": { "type": "integer", "minimum": 0, "maximum": 3 }
+            "maxFollowUps": { "type": "integer", "minimum": 0, "maximum": 3 },
+            "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 1900 }
           }
         },
         "analysis": {
@@ -87,7 +88,8 @@
           "properties": {
             "enabled": { "type": "boolean" },
             "afterTurnAudit": { "type": "boolean" },
-            "maxFollowUps": { "type": "integer", "minimum": 0, "maximum": 3 }
+            "maxFollowUps": { "type": "integer", "minimum": 0, "maximum": 3 },
+            "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 1900 }
           }
         },
         "changeGate": { "$ref": "#/$defs/changeGate" },

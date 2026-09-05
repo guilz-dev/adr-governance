@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { existsSync } from 'node:fs'
@@ -19,29 +18,26 @@ function findRepoRoot(start) {
   }
 }
 
-function failOpen() {
-  process.stdout.write(JSON.stringify({ continue: true }))
-}
-
 const phase = process.argv[2] ?? 'before-turn'
 const shimDir = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = findRepoRoot(path.join(shimDir, '..', '..')) ?? findRepoRoot(process.cwd())
+const failOpenOutput = { continue: true }
+
 if (!repoRoot) {
-  failOpen()
+  process.stdout.write(JSON.stringify(failOpenOutput))
   process.exit(0)
 }
 
-const hookBin = path.join(repoRoot, '.adr-governance/bin/hook.mjs')
 const chunks = []
 for await (const chunk of process.stdin) chunks.push(chunk)
-const child = spawn(process.execPath, [hookBin, 'cursor', phase], {
-  cwd: repoRoot,
-  stdio: ['pipe', 'pipe', 'inherit'],
+const stdin = Buffer.concat(chunks)
+const { runHookShim } = await import(
+  path.join(repoRoot, '.adr-governance/bin/hook-shim-runner.mjs')
+)
+await runHookShim({
+  runtime: 'cursor',
+  phase,
+  repoRoot,
+  stdin,
+  failOpenOutput,
 })
-child.stdin.end(Buffer.concat(chunks))
-child.stdout.pipe(process.stdout)
-child.on('error', () => {
-  failOpen()
-  process.exit(0)
-})
-child.on('exit', (code) => process.exit(code ?? 0))

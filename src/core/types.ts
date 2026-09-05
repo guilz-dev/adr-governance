@@ -48,6 +48,7 @@ export type AdrConfig = {
     enabled: boolean
     afterTurnAudit: boolean
     maxFollowUps: number
+    timeoutMs: number
   }
   changeGate: ChangeGateConfig
   analysis: {

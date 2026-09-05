@@ -28,6 +28,7 @@ const STATIC_TEMPLATES: Array<[string, string]> = [
 const BUNDLE_TARGETS = [
   ['dist/bundle/cli.mjs', '.adr-governance/bin/cli.mjs'],
   ['dist/bundle/hook.mjs', '.adr-governance/bin/hook.mjs'],
+  ['templates/shared/hook-shim-runner.mjs', '.adr-governance/bin/hook-shim-runner.mjs'],
 ] as const
 
 export function proposedAdrReadme(language: 'ja' | 'en', acceptedDir: string): string {
