@@ -63,14 +63,17 @@ async function main(): Promise<void> {
             ? toCursorSessionStart(ctx)
             : toCursorBeforeSubmit()
         process.stdout.write(JSON.stringify(out))
+        if (result.warning) console.error(result.warning)
         return
       }
       if (runtime === 'claude' || runtime === 'codex') {
         process.stdout.write(JSON.stringify(toClaudeUserPromptSubmit(ctx)))
+        if (result.warning) console.error(result.warning)
         return
       }
       if (runtime === 'gemini') {
         process.stdout.write(JSON.stringify(toGeminiBeforeAgent(ctx)))
+        if (result.warning) console.error(result.warning)
         return
       }
     }
@@ -83,14 +86,23 @@ async function main(): Promise<void> {
       })
       if (runtime === 'cursor') {
         process.stdout.write(JSON.stringify(toCursorStop(result.followUpMessage)))
+        if (result.warning && !result.warning.includes('Legacy turn state')) {
+          console.error(result.warning)
+        }
         return
       }
       if (runtime === 'claude' || runtime === 'codex') {
         process.stdout.write(JSON.stringify(toClaudeStop(result.followUpMessage)))
+        if (result.warning && !result.warning.includes('Legacy turn state')) {
+          console.error(result.warning)
+        }
         return
       }
       if (runtime === 'gemini') {
         process.stdout.write(JSON.stringify(toGeminiAfterAgent(result.followUpMessage)))
+        if (result.warning && !result.warning.includes('Legacy turn state')) {
+          console.error(result.warning)
+        }
         return
       }
     }

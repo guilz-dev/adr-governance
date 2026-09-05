@@ -236,6 +236,7 @@ describe('turn pointer without session id', () => {
         watchGitStatusHash: '',
         overflowWatchHash: '',
         contentHashes: {},
+        collectionMode: 'content',
       },
       relevantAdrPaths: [],
       followUpCount: 0,

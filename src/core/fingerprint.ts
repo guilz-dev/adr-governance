@@ -2,6 +2,7 @@ import { watchPathsChanged } from './risk-signals.js'
 
 export {
   buildRepositoryFingerprint,
+  degradationWarningMessage,
   readGitStatusHash,
 } from './fingerprint-build.js'
 
@@ -16,19 +17,19 @@ export function fingerprintWatchPathsChanged(
 }
 
 /**
- * Returns null when either saved observation is unavailable, including state
- * written before the availability marker existed. Callers must fail open.
+ * Returns null when either saved observation is unavailable, including legacy
+ * state without collectionMode. Callers must fail open.
  */
 export function repositoryFingerprintChanged(
   before: RepositoryFingerprint,
   after: RepositoryFingerprint,
 ): boolean | null {
-  if (
-    before.collectionAvailable !== true ||
-    after.collectionAvailable !== true ||
-    !before.repositoryStateHash ||
-    !after.repositoryStateHash
-  ) {
+  const beforeMode = before.collectionMode ?? 'unavailable'
+  const afterMode = after.collectionMode ?? 'unavailable'
+  if (beforeMode === 'unavailable' || afterMode === 'unavailable') {
+    return null
+  }
+  if (!before.repositoryStateHash || !after.repositoryStateHash) {
     return null
   }
   return before.repositoryStateHash !== after.repositoryStateHash

@@ -44,6 +44,7 @@ function baseTurnState(overrides: Partial<TurnState> = {}): TurnState {
       watchGitStatusHash: '',
       overflowWatchHash: '',
       contentHashes: {},
+      collectionMode: 'content',
     },
     relevantAdrPaths: [],
     followUpCount: 0,

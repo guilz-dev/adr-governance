@@ -129,16 +129,17 @@ export type InitPlan = {
   reviewQuestions?: string[]
 }
 
+export type FingerprintCollectionMode = 'content' | 'metadata' | 'unavailable'
+
 export type RepositoryFingerprint = {
   paths: string[]
   gitStatusHash: string
   watchGitStatusHash: string
   overflowWatchHash: string
   contentHashes: Record<string, string>
-  /** Present only when a complete bounded Git observation was collected. */
   repositoryStateHash?: string
-  /** Absent in v0.1.x saved turn state; absence is treated as unavailable. */
-  collectionAvailable?: boolean
+  collectionMode: FingerprintCollectionMode
+  degradationReason?: 'untracked-count' | 'untracked-size' | 'git-unavailable'
 }
 
 export type TurnReceipt = {
@@ -159,6 +160,7 @@ export type TurnState = {
   beforeFingerprint: RepositoryFingerprint
   beforeDecisionCorpus?: import('./decision-corpus.js').DecisionCorpusSnapshot
   changedDecisionCorpusPaths?: string[]
+  degradationWarningShown?: boolean
   relevantAdrPaths: string[]
   followUpCount: number
   receipt: TurnReceipt | null

@@ -44,10 +44,16 @@ export function buildHookContext(
   risk: RiskLevel,
   signals: string[],
   relevantAdrPaths: string[],
+  degradationReason?: 'untracked-count' | 'untracked-size' | 'git-unavailable',
 ): HookContext {
   const standingReminder = buildStandingReminder()
-  const fullInstruction =
+  let fullInstruction =
     risk === 'none' ? standingReminder : buildFullInstruction(config, relevantAdrPaths)
+
+  if (degradationReason) {
+    const label = degradationReason === 'git-unavailable' ? 'unavailable' : degradationReason
+    fullInstruction += `\n\nRepository change detection is using metadata fallback (${label}).\nThe CI decision gate remains authoritative.`
+  }
 
   return {
     risk,
