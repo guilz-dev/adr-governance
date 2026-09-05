@@ -44,6 +44,7 @@ function baseTurnState(overrides: Partial<TurnState> = {}): TurnState {
       watchGitStatusHash: '',
       overflowWatchHash: '',
       contentHashes: {},
+      collectionMode: 'content',
     },
     relevantAdrPaths: [],
     followUpCount: 0,
@@ -366,6 +367,42 @@ describe('after-turn audit follow-up (no synthetic receipts)', () => {
     expect(stateAfter?.receipt).toBeNull()
   })
 
+  it('does not resolve an audit when ADR mtime changes without content', async () => {
+    const repo = await setupRepo('adr-audit-touch-only-')
+    const config = defaultConfig({ hooks: { enabled: true, afterTurnAudit: true, maxFollowUps: 2 } })
+    await writeFile(path.join(repo, 'adr.config.json'), JSON.stringify(config, null, 2))
+    const conversationId = 'conv-audit-touch-only'
+    const gen1 = 'gen-audit-touch-only-1'
+    const gen2 = 'gen-audit-touch-only-2'
+
+    await runBeforeTurn({
+      cwd: repo,
+      prompt: 'We need a new database migration for auth architecture',
+      sessionId: gen1,
+      conversationId,
+    })
+    await runAfterTurn({ cwd: repo, sessionId: gen1, conversationId })
+
+    const adrPath = path.join(repo, 'docs/adr/0001-touch-test.md')
+    await mkdir(path.dirname(adrPath), { recursive: true })
+    await writeFile(
+      adrPath,
+      '---\nstatus: accepted\ndate: 2026-09-03\n---\n\n# Touch test\n',
+    )
+    execFileSync('git', ['add', adrPath], { cwd: repo })
+    gitCommit(repo, 'add adr for touch test')
+
+    await runBeforeTurn({
+      cwd: repo,
+      prompt: AUDIT_FOLLOWUP_MESSAGE,
+      sessionId: gen2,
+      conversationId,
+    })
+    await utimes(adrPath, new Date(), new Date())
+    const after = await runAfterTurn({ cwd: repo, sessionId: gen2, conversationId })
+    expect(after.allowFinish).toBe(false)
+  })
+
   it('resolves a pending audit when an accepted ADR is updated', async () => {
     const repo = await setupRepo('adr-audit-docs-resolution-')
     const conversationId = 'conv-audit-docs-resolution'
@@ -386,15 +423,12 @@ describe('after-turn audit follow-up (no synthetic receipts)', () => {
       sessionId: gen2,
       conversationId,
     })
-    await mkdir(path.join(repo, 'docs', 'adr', 'accepted'), { recursive: true })
-    const adrPath = path.join(repo, 'docs', 'adr', 'accepted', 'ADR-0001-auth.md')
+    const adrPath = path.join(repo, 'docs/adr/0001-auth.md')
+    await mkdir(path.dirname(adrPath), { recursive: true })
     await writeFile(
       adrPath,
       '---\nstatus: accepted\ndate: 2026-09-03\n---\n\n# Auth\n',
     )
-    const stateBeforeAfterTurn = await loadTurnStateForSession(repo, gen2)
-    const coarseMtime = new Date(Date.parse(stateBeforeAfterTurn!.createdAt) - 500)
-    await utimes(adrPath, coarseMtime, coarseMtime)
 
     const after = await runAfterTurn({ cwd: repo, sessionId: gen2, conversationId })
     expect(after.allowFinish).toBe(true)

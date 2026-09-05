@@ -6,6 +6,7 @@ import {
   hashDecisionCorpus,
   BaseRefUnavailableError,
 } from '../../core/decision-corpus.js'
+import { buildChangeSet } from '../../core/change-set.js'
 import { contentHashForFile, parseDecisionEvidence, serializeDecisionEvidence } from '../../core/decision-evidence.js'
 import type { AdrConfig, NoAdrReason } from '../../core/types.js'
 import { loadAllAdrs } from '../../core/repository-state.js'
@@ -34,6 +35,8 @@ export async function runAttest(options: AttestOptions) {
 
   const corpus = await buildRefDecisionCorpus(options.repoRoot, options.baseRef, options.config)
   const decisionCorpusHash = hashDecisionCorpus(corpus)
+  const changeSet = await buildChangeSet(options.repoRoot, options.baseRef)
+  const baseCommit = changeSet.baseCommit
 
   const adrs = await loadAllAdrs(options.repoRoot, options.config)
   const adrById = new Map(adrs.map((a) => [a.id, a]))
@@ -49,8 +52,13 @@ export async function runAttest(options: AttestOptions) {
       refs.push({ id, contentHash: contentHashForFile(content) })
     }
     const evidence = {
-      schemaVersion: 1 as const,
+      schemaVersion: 2 as const,
+      baseCommit,
       decisionCorpusHash,
+      changeSet: {
+        algorithm: 'git-change-set-v1' as const,
+        digest: changeSet.digest,
+      },
       outcome: { kind: 'accepted-adr' as const, refs },
       reviewedProposals: options.reviewedProposalIds.map((id) => ({
         id,
@@ -65,8 +73,13 @@ export async function runAttest(options: AttestOptions) {
   }
 
   const evidence = {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
+    baseCommit,
     decisionCorpusHash,
+    changeSet: {
+      algorithm: 'git-change-set-v1' as const,
+      digest: changeSet.digest,
+    },
     outcome: {
       kind: 'no-adr' as const,
       reason: options.noAdrReason!,

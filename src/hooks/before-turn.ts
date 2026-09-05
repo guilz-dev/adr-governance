@@ -14,7 +14,8 @@ import {
 } from '../core/repository-state.js'
 import { buildHookContext, isAuditFollowUpPrompt } from './common.js'
 import type { TurnState } from '../core/types.js'
-import { buildRepositoryFingerprint } from '../core/fingerprint.js'
+import { buildRepositoryFingerprint, degradationWarningMessage } from '../core/fingerprint.js'
+import { buildWorkingDecisionCorpus, snapshotDecisionCorpus } from '../core/decision-corpus.js'
 import { pruneOldState } from '../core/locks.js'
 import { gitLsFiles } from '../cli/git.js'
 import {
@@ -78,15 +79,18 @@ export async function runBeforeTurn(input: BeforeTurnInput): Promise<BeforeTurnR
     : assessPromptRisk(input.prompt, config)
   const relevant = isAuditFollowUp ? [] : rankRelevantAdrs(input.prompt, adrs)
 
+  const tracked = await gitLsFiles(repoRoot)
+  const beforeFingerprint = await buildRepositoryFingerprint(repoRoot, tracked, config)
+  const degradationReason = beforeFingerprint.degradationReason
+  const shouldWarnDegradation = degradationReason !== undefined
+
   const hookContext = buildHookContext(
     config,
     assessed.risk,
     assessed.signals,
     relevant.map((a) => a.path),
+    shouldWarnDegradation ? degradationReason : undefined,
   )
-
-  const tracked = await gitLsFiles(repoRoot)
-  const beforeFingerprint = await buildRepositoryFingerprint(repoRoot, tracked)
 
   const stateDir = path.join(repoRoot, STATE_DIR, 'turns')
   await mkdir(stateDir, { recursive: true })
@@ -96,8 +100,12 @@ export async function runBeforeTurn(input: BeforeTurnInput): Promise<BeforeTurnR
     input.sessionId?.trim() ||
     (input.hookPayload ? resolveHookTurnKey(input.hookPayload) : randomUUID())
 
+  const beforeDecisionCorpus = snapshotDecisionCorpus(
+    await buildWorkingDecisionCorpus(repoRoot, config),
+  )
+
   const turnState: TurnState = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     sessionId,
     turnId,
     conversationId,
@@ -106,6 +114,8 @@ export async function runBeforeTurn(input: BeforeTurnInput): Promise<BeforeTurnR
     risk: assessed.risk,
     signals: assessed.signals,
     beforeFingerprint,
+    beforeDecisionCorpus,
+    degradationWarningShown: shouldWarnDegradation || undefined,
     relevantAdrPaths: relevant.map((a) => a.path),
     followUpCount: auditChain?.followUpCount ?? 0,
     receipt: null,
@@ -133,7 +143,14 @@ export async function runBeforeTurn(input: BeforeTurnInput): Promise<BeforeTurnR
     })
   }
 
-  return { ok: true, hookContext, turnStatePath, sessionId, conversationId }
+  return {
+    ok: true,
+    hookContext,
+    turnStatePath,
+    sessionId,
+    conversationId,
+    warning: shouldWarnDegradation ? degradationWarningMessage(degradationReason!) : undefined,
+  }
 }
 
 export async function loadCurrentTurnState(

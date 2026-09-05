@@ -51,6 +51,7 @@ describe('loadTurnStateForSession isolation', () => {
         watchGitStatusHash: '',
         overflowWatchHash: '',
         contentHashes: {},
+        collectionMode: 'content',
       },
       relevantAdrPaths: [],
       followUpCount: 0,

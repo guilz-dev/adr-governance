@@ -10,6 +10,7 @@ import {
   buildRefDecisionCorpus,
   hashDecisionCorpus,
 } from '../../core/decision-corpus.js'
+import { buildChangeSet } from '../../core/change-set.js'
 import { contentHashForFile, parseDecisionEvidence } from '../../core/decision-evidence.js'
 import {
   collectValidationIssues,
@@ -20,7 +21,7 @@ import type { ParsedAdr } from '../../core/types.js'
 import type { ValidationIssue } from '../../core/validation.js'
 import { verifyAllRuntimeHookEntries } from '../../installer/hook-merge.js'
 import { validateContextLinks } from '../../core/context-links.js'
-import { listChangedPaths, readFileAtRef, refExists } from '../git-diff.js'
+import { listChangedPaths, readFileAtRef, refExists, resolveCommit } from '../git-diff.js'
 import { parseGitHubEventEvidence } from '../github-evidence.js'
 
 export type CheckOptions = {
@@ -266,6 +267,31 @@ async function checkDecisionAuthority(
     adrContentHashes.set(adr.id, contentHashForFile(content))
   }
 
+  let resolvedBaseCommit: string
+  try {
+    resolvedBaseCommit = await resolveCommit(repoRoot, baseRef)
+  } catch {
+    issues.push({
+      severity: 'error',
+      code: 'base-ref-unavailable',
+      message: `Could not read base ref ${baseRef}`,
+    })
+    return issues
+  }
+
+  let currentChangeSetDigest: string
+  try {
+    const changeSet = await buildChangeSet(repoRoot, baseRef)
+    currentChangeSetDigest = changeSet.digest
+  } catch {
+    issues.push({
+      severity: 'error',
+      code: 'base-ref-unavailable',
+      message: `Could not build change set against base ref ${baseRef}`,
+    })
+    return issues
+  }
+
   issues.push(
     ...evaluateChangeGate({
       config,
@@ -274,6 +300,8 @@ async function checkDecisionAuthority(
       changedProposedAdrs: changedProposed,
       adrContentHashes,
       expectedDecisionCorpusHash: expectedHash,
+      resolvedBaseCommit,
+      currentChangeSetDigest,
       evidence,
     }),
   )

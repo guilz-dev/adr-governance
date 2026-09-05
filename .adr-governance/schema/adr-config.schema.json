@@ -1,0 +1,107 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ADR Governance Config",
+  "oneOf": [
+    { "$ref": "#/$defs/configV1" },
+    { "$ref": "#/$defs/configV2" }
+  ],
+  "$defs": {
+    "layout": {
+      "type": "object",
+      "required": ["mode", "acceptedDir", "proposedDir", "contextFile", "contextMapFile"],
+      "properties": {
+        "mode": { "enum": ["split", "single"] },
+        "acceptedDir": { "type": "string" },
+        "proposedDir": { "type": "string" },
+        "contextFile": { "type": "string" },
+        "contextMapFile": { "type": "string" }
+      }
+    },
+    "changeGate": {
+      "type": "object",
+      "required": ["mode", "exemptPaths", "requireNoAdrRationale"],
+      "properties": {
+        "mode": { "enum": ["off", "warn", "enforce"] },
+        "exemptPaths": { "type": "array", "items": { "type": "string" } },
+        "requireNoAdrRationale": { "type": "boolean" }
+      }
+    },
+    "configV1": {
+      "type": "object",
+      "required": ["version", "layout", "promotion", "documents", "hooks", "analysis"],
+      "properties": {
+        "version": { "type": "integer", "const": 1 },
+        "layout": { "$ref": "#/$defs/layout" },
+        "promotion": {
+          "type": "object",
+          "properties": { "requireHumanAcceptance": { "type": "boolean" } }
+        },
+        "documents": {
+          "type": "object",
+          "properties": {
+            "language": { "enum": ["ja", "en"] },
+            "idDigits": { "type": "integer", "minimum": 3, "maximum": 6 },
+            "allowAcceptedClarifications": { "type": "boolean" },
+            "legacyFrontmatter": { "type": "boolean" }
+          }
+        },
+        "hooks": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "afterTurnAudit": { "type": "boolean" },
+            "maxFollowUps": { "type": "integer", "minimum": 0, "maximum": 3 },
+            "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 1900 }
+          }
+        },
+        "analysis": {
+          "type": "object",
+          "properties": {
+            "maxFiles": { "type": "integer" },
+            "maxBytesPerFile": { "type": "integer" },
+            "exclude": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "configV2": {
+      "type": "object",
+      "required": ["version", "layout", "promotion", "documents", "hooks", "changeGate", "analysis"],
+      "properties": {
+        "version": { "type": "integer", "const": 2 },
+        "layout": { "$ref": "#/$defs/layout" },
+        "promotion": {
+          "type": "object",
+          "properties": { "requireHumanAcceptance": { "type": "boolean" } }
+        },
+        "documents": {
+          "type": "object",
+          "properties": {
+            "language": { "enum": ["ja", "en"] },
+            "idDigits": { "type": "integer", "minimum": 3, "maximum": 6 },
+            "allowAcceptedClarifications": { "type": "boolean" },
+            "legacyFrontmatter": { "type": "boolean" }
+          }
+        },
+        "hooks": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "afterTurnAudit": { "type": "boolean" },
+            "maxFollowUps": { "type": "integer", "minimum": 0, "maximum": 3 },
+            "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 1900 }
+          }
+        },
+        "changeGate": { "$ref": "#/$defs/changeGate" },
+        "analysis": {
+          "type": "object",
+          "properties": {
+            "maxFiles": { "type": "integer" },
+            "maxBytesPerFile": { "type": "integer" },
+            "exclude": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    }
+  }
+}

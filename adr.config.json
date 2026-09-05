@@ -18,14 +18,14 @@
     "legacyFrontmatter": false
   },
   "hooks": {
-    "enabled": false,
+    "enabled": true,
     "afterTurnAudit": true,
-    "maxFollowUps": 1
+    "maxFollowUps": 1,
+    "timeoutMs": 1500
   },
   "changeGate": {
     "mode": "warn",
-    "exemptPaths": [],
-    "requireNoAdrRationale": true
+    "exemptPaths": []
   },
   "analysis": {
     "maxFiles": 2000,

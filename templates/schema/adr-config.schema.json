@@ -19,11 +19,18 @@
     },
     "changeGate": {
       "type": "object",
-      "required": ["mode", "exemptPaths", "requireNoAdrRationale"],
+      "required": ["mode", "exemptPaths"],
       "properties": {
         "mode": { "enum": ["off", "warn", "enforce"] },
-        "exemptPaths": { "type": "array", "items": { "type": "string" } },
-        "requireNoAdrRationale": { "type": "boolean" }
+        "exemptPaths": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "riskSignals": {
+      "type": "object",
+      "properties": {
+        "highSignalTerms": { "type": "array", "items": { "type": "string" } },
+        "additionalTerms": { "type": "array", "items": { "type": "string" } },
+        "watchPaths": { "type": "array", "items": { "type": "string" } }
       }
     },
     "configV1": {
@@ -50,7 +57,8 @@
           "properties": {
             "enabled": { "type": "boolean" },
             "afterTurnAudit": { "type": "boolean" },
-            "maxFollowUps": { "type": "integer", "minimum": 0, "maximum": 3 }
+            "maxFollowUps": { "type": "integer", "minimum": 0, "maximum": 3 },
+            "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 1900 }
           }
         },
         "analysis": {
@@ -87,10 +95,12 @@
           "properties": {
             "enabled": { "type": "boolean" },
             "afterTurnAudit": { "type": "boolean" },
-            "maxFollowUps": { "type": "integer", "minimum": 0, "maximum": 3 }
+            "maxFollowUps": { "type": "integer", "minimum": 0, "maximum": 3 },
+            "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 1900 }
           }
         },
         "changeGate": { "$ref": "#/$defs/changeGate" },
+        "riskSignals": { "$ref": "#/$defs/riskSignals" },
         "analysis": {
           "type": "object",
           "properties": {

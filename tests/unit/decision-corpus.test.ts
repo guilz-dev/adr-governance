@@ -19,11 +19,29 @@ vi.mock('../../src/cli/git-diff.js', async (importOriginal) => {
   }
 })
 
-import { BaseRefUnavailableError, buildRefDecisionCorpus } from '../../src/core/decision-corpus.js'
+import { BaseRefUnavailableError, buildRefDecisionCorpus, changedDecisionCorpusPaths, hashDecisionCorpus, snapshotDecisionCorpus } from '../../src/core/decision-corpus.js'
 import { runCheck } from '../../src/cli/commands/check.js'
 import { defaultConfig } from '../../src/core/config.js'
 
 const exec = promisify(execFile)
+
+describe('decision corpus snapshots', () => {
+  const a = { path: 'docs/adr/0001-a.md', contentHash: `sha256:${'1'.repeat(64)}` }
+  const b = { path: 'docs/adr/0002-b.md', contentHash: `sha256:${'2'.repeat(64)}` }
+
+  it('detects changed paths between snapshots', () => {
+    const before = snapshotDecisionCorpus([a, b])
+    const after = snapshotDecisionCorpus([
+      { ...a, contentHash: `sha256:${'9'.repeat(64)}` },
+      b,
+    ])
+    expect(changedDecisionCorpusPaths(before, after)).toEqual(['docs/adr/0001-a.md'])
+  })
+
+  it('is order-independent for hash', () => {
+    expect(snapshotDecisionCorpus([b, a]).hash).toBe(snapshotDecisionCorpus([a, b]).hash)
+  })
+})
 
 describe('base decision corpus', () => {
   it('fails closed when an enumerated base ADR cannot be read', async () => {

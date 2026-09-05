@@ -48,14 +48,35 @@ const HIGH_SIGNAL_TERMS_JA = [
   'トレードオフ',
 ]
 
-const WATCH_PATH_PATTERNS = [
+const ENGLISH_TERM_ALIASES: Record<string, string[]> = {
+  auth: ['auth', 'authentication', 'authorization'],
+  adr: ['adr', 'adrs'],
+  api: ['api'],
+}
+
+const DEFAULT_WATCH_PATH_PATTERNS: RegExp[] = [
   /package\.json$/i,
   /pnpm-workspace\.yaml$/i,
   /package-lock\.json$/i,
   /pnpm-lock\.yaml$/i,
+  /pyproject\.toml$/i,
+  /poetry\.lock$/i,
+  /requirements\.txt$/i,
+  /go\.mod$/i,
+  /go\.sum$/i,
+  /Cargo\.toml$/i,
+  /Cargo\.lock$/i,
+  /pom\.xml$/i,
+  /build\.gradle(\.kts)?$/i,
+  /Gemfile(\.lock)?$/i,
+  /composer\.json$/i,
+  /Dockerfile$/i,
+  /docker-compose\.ya?ml$/i,
+  /openapi\.ya?ml$/i,
   /schema\.ts$/i,
   /migrations?\//i,
   /drizzle\//i,
+  /alembic\//i,
   /routes?\//i,
   /\.github\/workflows\//i,
   /wrangler\.toml$/i,
@@ -66,30 +87,86 @@ const WATCH_PATH_PATTERNS = [
   /policy/i,
 ]
 
+const LIKELY_RISK_THRESHOLD = 3
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function isJapaneseTerm(term: string): boolean {
+  return /[\u3040-\u30ff\u3400-\u9fff]/.test(term)
+}
+
+function watchPathPatternFromConfig(entry: string): RegExp {
+  const trimmed = entry.trim()
+  if (!trimmed) return /$/
+  if (trimmed.startsWith('^') || trimmed.includes('(') || trimmed.includes('[')) {
+    return new RegExp(trimmed, 'i')
+  }
+  if (trimmed.endsWith('/')) {
+    const escaped = escapeRegex(trimmed)
+    return new RegExp(escaped, 'i')
+  }
+  const globbed = escapeRegex(trimmed).replace(/\\\*/g, '.*')
+  return new RegExp(`${globbed}$`, 'i')
+}
+
+export function resolveHighSignalTerms(config: AdrConfig): string[] {
+  const base =
+    config.riskSignals?.highSignalTerms ??
+    [...HIGH_SIGNAL_TERMS_EN, ...HIGH_SIGNAL_TERMS_JA]
+  const additional = config.riskSignals?.additionalTerms ?? []
+  return [...base, ...additional]
+}
+
+export function resolveWatchPathPatterns(config?: AdrConfig): RegExp[] {
+  const patterns = [...DEFAULT_WATCH_PATH_PATTERNS]
+  for (const entry of config?.riskSignals?.watchPaths ?? []) {
+    patterns.push(watchPathPatternFromConfig(entry))
+  }
+  return patterns
+}
+
+function matchesEnglishTerm(normalized: string, term: string): boolean {
+  const lower = term.toLowerCase()
+  if (lower.includes(' ')) {
+    return normalized.includes(lower)
+  }
+
+  const aliases = ENGLISH_TERM_ALIASES[lower] ?? [lower]
+  return aliases.some((alias) => {
+    const re = new RegExp(`\\b${escapeRegex(alias)}\\b`)
+    return re.test(normalized)
+  })
+}
+
+function matchesTerm(normalized: string, term: string): boolean {
+  if (isJapaneseTerm(term)) {
+    return normalized.includes(term.toLowerCase())
+  }
+  return matchesEnglishTerm(normalized, term)
+}
+
 export function assessPromptRisk(
   prompt: string,
   config: AdrConfig,
 ): { risk: RiskLevel; signals: string[] } {
   const normalized = prompt.toLowerCase()
   const signals: string[] = []
-  const terms =
-    config.documents.language === 'ja'
-      ? [...HIGH_SIGNAL_TERMS_EN, ...HIGH_SIGNAL_TERMS_JA]
-      : HIGH_SIGNAL_TERMS_EN
 
-  for (const term of terms) {
-    if (normalized.includes(term.toLowerCase())) {
+  for (const term of resolveHighSignalTerms(config)) {
+    if (matchesTerm(normalized, term)) {
       signals.push(`term:${term}`)
     }
   }
 
-  if (signals.length >= 3) return { risk: 'likely', signals }
+  if (signals.length >= LIKELY_RISK_THRESHOLD) return { risk: 'likely', signals }
   if (signals.length >= 1) return { risk: 'possible', signals }
   return { risk: 'none', signals }
 }
 
-export function isWatchPath(relativePath: string): boolean {
-  return WATCH_PATH_PATTERNS.some((re) => re.test(relativePath))
+export function isWatchPath(relativePath: string, config?: AdrConfig): boolean {
+  return resolveWatchPathPatterns(config).some((re) => re.test(relativePath))
 }
 
 export function rankRelevantAdrs(
@@ -126,6 +203,7 @@ export function hashPrompt(prompt: string): string {
 export function watchPathsChanged(
   before: RepositoryFingerprint,
   after: RepositoryFingerprint,
+  config?: AdrConfig,
 ): boolean {
   if (
     hasWatchGitStatusHash(before) &&
@@ -144,7 +222,7 @@ export function watchPathsChanged(
 
   const allPaths = new Set([...before.paths, ...after.paths])
   for (const p of allPaths) {
-    if (!isWatchPath(p)) continue
+    if (!isWatchPath(p, config)) continue
     if (before.contentHashes[p] !== after.contentHashes[p]) return true
   }
   return false

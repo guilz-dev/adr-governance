@@ -448,11 +448,14 @@ risk判定はADR要否の最終判断ではない。hookはSkillを呼ぶべき�
 
 ### 9.2 risk signal
 
-既定のhigh-signal語には、architecture、boundary、database、storage、migration、auth、permission、API contract、event、queue、provider、deployment、infrastructure、dependency、monorepo、deprecation、delete policy、および設定言語に対応する語を含める。
+既定のhigh-signal語には、architecture、boundary、database、storage、migration、auth、permission、API contract、event、queue、provider、deployment、infrastructure、dependency、monorepo、deprecation、delete policy、および英日両方の語を含める。英語語は語境界（alias付き）で評価し、`author` などの部分一致誤検出を避ける。
+
+`adr.config.json` の `riskSignals` で `highSignalTerms`（既定置換）、`additionalTerms`（追記）、`watchPaths`（既定監視pathへの追記）を任意設定できる。
 
 既定の監視pathには次を含める。
 
 - package/workspace manifestとlockfile
+- Python / Go / Rust / JVM / Ruby manifest
 - DB schemaとmigration
 - API/public contract/schema
 - auth/permission/policy
@@ -460,7 +463,7 @@ risk判定はADR要否の最終判断ではない。hookはSkillを呼ぶべき�
 - infra/deploy/CI
 - トップレベルのpackageまたはapplication境界設定
 
-riskが `none` の場合は短い常駐通知だけを渡す。`possible` または `likely` の場合は、設定、文書path、関連ADR、3条件、turn終了前の監査指示を渡す。
+riskが `none` の場合は短い常駐通知だけを渡す。`possible` または `likely` の場合は、設定、文書path、関連ADR、3条件、turn終了前の監査指示を渡す。Cursor は before-turn hook が context を返せないため、`.cursor/rules/adr-governance.mdc` が `.adr-governance/state/current-turn/` の elevated risk と `relevantAdrPaths` を読ませる。
 
 ### 9.3 Agentの判断
 
@@ -714,7 +717,28 @@ node .adr-governance/bin/cli.mjs check [--base <git-ref>] [--evidence <json-path
 
 enforce modeではbase ref、証跡、参照ADR、decision corpus、比較処理のいずれかを読めない場合にfail-closedとする。warn modeはchange-gate固有findingだけをwarningへ下げ、従来の構造検証errorはerrorのまま維持する。
 
-主なvalidation codeは `base-ref-unavailable`、`decision-evidence-required`、`decision-evidence-invalid`、`decision-baseline-stale`、`decision-ref-not-accepted`、`decision-ref-stale`、`changed-proposal-unreviewed`、`invalid-status-transition`、`accepted-without-acceptance`、`proposed-with-acceptance` とする。
+主なvalidation codeは `base-ref-unavailable`、`decision-evidence-required`、`decision-evidence-invalid`、`decision-evidence-legacy`、`decision-baseline-stale`、`decision-base-stale`、`decision-changeset-stale`、`decision-ref-not-accepted`、`decision-ref-stale`、`changed-proposal-unreviewed`、`invalid-status-transition`、`accepted-without-acceptance`、`proposed-with-acceptance` とする。
+
+#### DecisionEvidence v2
+
+schemaVersion 2 は次のフィールドを持つ。
+
+- `baseCommit`: attest時点のimmutable base commit（40または64文字のlowercase hex）
+- `decisionCorpusHash`: base ref上のdecision corpus hash
+- `changeSet.algorithm`: 常に `git-change-set-v1`
+- `changeSet.digest`: canonical changesetのSHA-256 digest
+
+`git-change-set-v1` は `git merge-base <baseCommit> HEAD` をcomparison baseとし、immutable base tipとHEADのthree-dot差分、index/worktree status、untracked filesの和集合から変更pathを列挙する。rename heuristicは使わず、旧pathのdeleteと新pathのaddとして表現する。stateディレクトリとgitignore対象fileは含めない。
+
+canonical payloadの1 entryは次のNUL区切り形式とする。
+
+```text
+path NUL base-mode NUL base-sha256 NUL current-mode NUL current-sha256 NUL
+```
+
+存在しないsideはmode/hashとも `-`。pathはrepository-relative POSIX path、sortはUTF-8 bytes昇順、hash表記は `sha256:` に64文字のlowercase hexを続けたものとする。
+
+schemaVersion 1はv0.2.xでは `decision-evidence-legacy` warningとして受理し、v0.3.0でrejectする。`changedPathsHash`（path集合のみのhash）は棄却案であり実装しない。
 
 exit codeは `0=success`、`1=validation/policy error`、`2=configuration/runtime/usage error` とする。
 
@@ -844,14 +868,16 @@ turn stateは `.adr-governance/state/` に保存し、`.adr-governance/.gitignor
 
 ### 14.2 fingerprint
 
-fingerprintは監視対象fileの相対path、Git status、content hashから作る。ファイル本文はstateへ保存しない。最大500 fileまでとし、上限超過時はpath集合とGit diff metadataへ縮退する。
+fingerprintは監視対象fileの相対path、Git status、content hashから作る。ファイル本文はstateへ保存しない。最大500 fileまでとし、上限超過時は各entryのnormalized path、size、`Math.trunc(mtimeMs)` をhash化するmetadata fallbackへ縮退する。
+
+`collectionMode` は `content` | `metadata` | `unavailable` のいずれかを明示する。untracked file数が501以上、単一fileが1MB超、Git command失敗時は縮退し、`degradationReason` をstderrへ1回だけ警告する。縮退中は「CI decision gateが最終権威である」旨をターン指示へ含める。
 
 ### 14.3 性能目標
 
 - before-turn hook: 通常リポジトリでp95 300ms未満
 - after-turn hook: p95 500ms未満
-- hook timeout: 2秒
-- hook failure: 通常作業はfail-openしwarningを出す
+- hook timeout: 2秒（runtime shimは既定1500msのウォッチドッグ、設定可能範囲100〜1900ms）
+- hook failure: 通常作業はfail-openしwarningを出す。shimは子プロセスstdoutをbufferし、正常exit時のみ単一JSONを出力する
 - `check`: validation errorをfail-closedでCIへ返す
 
 hookは外部network、LLM、package installを実行しない。
@@ -1031,7 +1057,8 @@ GitHub adapterはPR本文の単一 fenced `adr-governance` blockだけを読み�
 - initは解析とapplyの二段階とする。
 - semantic判断とaccepted/no-ADR outcomeの表明は人間またはAgentが担う。hookはriskを観測できるが判断内容を生成しない。
 - provider-neutralな `DecisionEvidence` とpure change-gate policyをcoreに置き、GitHub固有のPR本文処理はadapterへ隔離する。
-- evidenceは作成時のbase decision corpusに束縛し、base corpusまたは参照ADRの変更で失効させる。
+- evidenceは作成時のimmutable base commit、base decision corpus、exact changeset digestに束縛し、base corpus、base commit、changeset、参照ADRの変更で失効させる。
+- after-turnのdocs更新判定はdecision corpus content hashを使い、filesystem mtimeは使わない。
 - interactive hookはfail-open、CI `check --base` は検証不能時fail-closedとする。
 - targetへ配布するbundleはNode.js 20+とGit以外を要求しない。
 - prompt、transcript、source本文、secret、token、credentialをevidenceまたはstateへ保存しない。

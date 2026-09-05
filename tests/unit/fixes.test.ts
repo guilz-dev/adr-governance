@@ -13,7 +13,7 @@ import { MANAGED_MARKER } from '../../src/installer/hook-merge-types.js'
 import { turnPointerRelPath } from '../../src/hooks/turn-pointer.js'
 import { runCreate } from '../../src/cli/commands/create.js'
 import { buildRepositoryFingerprint } from '../../src/core/fingerprint.js'
-import { fingerprintWatchPathsChanged } from '../../src/core/fingerprint.js'
+import { fingerprintWatchPathsChanged, repositoryFingerprintChanged } from '../../src/core/fingerprint.js'
 import { watchPathsChanged } from '../../src/core/risk-signals.js'
 import type { RepositoryFingerprint } from '../../src/core/types.js'
 import { runCheck } from '../../src/cli/commands/check.js'
@@ -31,7 +31,14 @@ function fingerprint(
   watchGitStatusHash = gitStatusHash,
   overflowWatchHash = 'same',
 ): RepositoryFingerprint {
-  return { paths, gitStatusHash, watchGitStatusHash, overflowWatchHash, contentHashes }
+  return {
+    paths,
+    gitStatusHash,
+    watchGitStatusHash,
+    overflowWatchHash,
+    contentHashes,
+    collectionMode: 'content',
+  }
 }
 
 describe('legacy ADR parsing', () => {
@@ -125,6 +132,54 @@ describe('create human acceptance guard', () => {
         body: '# Test\n\nBody',
       }),
     ).rejects.toThrow(/requireHumanAcceptance/)
+  })
+})
+
+describe('fingerprint degradation', () => {
+  it('uses metadata fallback for oversized untracked files', async () => {
+    const repo = await mkdtemp(path.join(tmpdir(), 'adr-fingerprint-degrade-'))
+    await exec('git', ['init'], { cwd: repo })
+    await exec('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
+    await exec('git', ['config', 'user.name', 'Test'], { cwd: repo })
+    await writeFile(path.join(repo, 'README.md'), '# test\n')
+    await exec('git', ['add', '.'], { cwd: repo })
+    await exec('git', ['commit', '-m', 'init'], { cwd: repo })
+    const large = Buffer.alloc(1024 * 1024 + 1, 1)
+    await writeFile(path.join(repo, 'large.log'), large)
+    const fp = await buildRepositoryFingerprint(repo, [])
+    expect(fp.collectionMode).toBe('metadata')
+    expect(fp.degradationReason).toBe('untracked-size')
+  })
+
+  it('detects metadata-mode repository changes', async () => {
+    const before = {
+      ...fingerprint([], {}),
+      collectionMode: 'metadata' as const,
+      repositoryStateHash: 'hash-a',
+      degradationReason: 'untracked-size' as const,
+    }
+    const after = {
+      ...fingerprint([], {}),
+      collectionMode: 'metadata' as const,
+      repositoryStateHash: 'hash-b',
+      degradationReason: 'untracked-size' as const,
+    }
+    expect(repositoryFingerprintChanged(before, after)).toBe(true)
+  })
+
+  it('returns null when collection is unavailable', () => {
+    const before = {
+      ...fingerprint([], {}),
+      collectionMode: 'unavailable' as const,
+      repositoryStateHash: 'hash-a',
+      degradationReason: 'git-unavailable' as const,
+    }
+    const after = {
+      ...fingerprint([], {}),
+      collectionMode: 'content' as const,
+      repositoryStateHash: 'hash-b',
+    }
+    expect(repositoryFingerprintChanged(before, after)).toBeNull()
   })
 })
 
@@ -280,6 +335,7 @@ describe('turn-close pointer', () => {
         watchGitStatusHash: '',
         overflowWatchHash: '',
         contentHashes: {},
+        collectionMode: 'content',
       },
       relevantAdrPaths: [],
       followUpCount: 0,
@@ -353,6 +409,11 @@ describe('cursor hook wrapper stdin', () => {
       path.join(repo, '.adr-governance/bin/hook.mjs'),
       await readFile(hookSrc, 'utf8'),
     )
+    const runnerSrc = path.resolve(import.meta.dirname, '../../templates/shared/hook-shim-runner.mjs')
+    await writeFile(
+      path.join(repo, '.adr-governance/bin/hook-shim-runner.mjs'),
+      await readFile(runnerSrc, 'utf8'),
+    )
     await writeFile(
       path.join(repo, '.cursor/hooks/adr-governance.mjs'),
       await readFile(wrapperSrc, 'utf8'),
@@ -372,15 +433,22 @@ describe('cursor hook wrapper stdin', () => {
         [path.join(repo, '.cursor/hooks/adr-governance.mjs'), 'before-turn'],
         { cwd: repo, stdio: ['pipe', 'pipe', 'pipe'] },
       )
-      const chunks: Buffer[] = []
-      child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk))
-      child.stderr.on('data', (chunk: Buffer) => chunks.push(chunk))
+      const stdoutChunks: Buffer[] = []
+      const stderrChunks: Buffer[] = []
+      child.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk))
+      child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk))
       child.on('error', reject)
       child.on('exit', (code) => {
         if (timer) clearTimeout(timer)
-        const text = Buffer.concat(chunks).toString('utf8')
+        const text = Buffer.concat(stdoutChunks).toString('utf8')
         if (code === 0) resolve(text)
-        else reject(new Error(`hook wrapper exited ${code}: ${text}`))
+        else {
+          reject(
+            new Error(
+              `hook wrapper exited ${code}: ${text}\n${Buffer.concat(stderrChunks).toString('utf8')}`,
+            ),
+          )
+        }
       })
       child.stdin.end(JSON.stringify(hookPayload))
       timer = setTimeout(() => {

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 import { configForSingleDir, defaultConfig } from '../../src/core/config.js'
+import { ciWorkflowSuggestion } from '../../src/analysis/init-hints.js'
 import { buildEvidenceBundle } from '../../src/analysis/repository-scan.js'
 import { buildInitPlanOperations } from '../../src/installer/init-plan-builder.js'
 import { buildEvidenceReferences, buildReviewQuestions, shouldProposeContextMap } from '../../src/installer/init-evidence-plan.js'
@@ -15,6 +16,18 @@ import type { TurnState } from '../../src/core/types.js'
 import { gitCommit, initTestGitRepo } from '../helpers/git-test-repo.js'
 
 const PACKAGE_ROOT = path.resolve(import.meta.dirname, '../..')
+
+describe('generated CI workflow', () => {
+  it('uses immutable PR base SHA and github event evidence', () => {
+    const workflow = ciWorkflowSuggestion()
+    expect(workflow).toContain('fetch-depth: 0')
+    expect(workflow).toContain('${{ github.event.pull_request.base.sha }}')
+    expect(workflow).toContain('--github-event "$GITHUB_EVENT_PATH"')
+    expect(workflow).not.toContain('--base origin/main')
+    expect(workflow).toContain('if: github.event_name == \'push\'')
+    expect(workflow).toMatch(/adr-check-push:[\s\S]*node \.adr-governance\/bin\/cli\.mjs check\n/)
+  })
+})
 
 describe('init evidence-informed plan', () => {
   it('does not create duplicate README operations for single layout', async () => {
@@ -236,6 +249,7 @@ describe('turn pointer without session id', () => {
         watchGitStatusHash: '',
         overflowWatchHash: '',
         contentHashes: {},
+        collectionMode: 'content',
       },
       relevantAdrPaths: [],
       followUpCount: 0,

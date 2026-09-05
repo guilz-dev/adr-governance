@@ -21,6 +21,8 @@ Adopt a **Decision Authority Gate** with provider-neutral `DecisionEvidence`, `a
 3. **Decision corpus invalidation:** evidence is bound to the base ref decision corpus hash; ADR/CONTEXT changes on base invalidate prior attestations.
 4. **Hooks observe risk only** — they must not fabricate `NoAdrReason` or parent receipts.
 5. **CI is fail-closed** when base ref, evidence, or corpus cannot be validated.
+6. **Exact change-set freshness:** ADR-0002 extends evidence freshness from the
+   base decision corpus to the exact repository snapshot being attested.
 
 ### Rejected alternatives
 
@@ -39,5 +41,6 @@ Adopt a **Decision Authority Gate** with provider-neutral `DecisionEvidence`, `a
 
 ## References
 
+- [ADR-0002: Bind Decision Evidence to the Exact Change Set](./0002-bind-evidence-to-exact-changeset.md)
 - Implementation plan: `docs/superpowers/plans/2026-09-03-decision-authority-gate.md`
 - Design spec: `docs/specs/adr-governance-design.md`

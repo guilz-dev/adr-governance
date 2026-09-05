@@ -132,3 +132,32 @@ export function hashDecisionCorpus(entries: DecisionCorpusEntry[]): string {
   const payload = sorted.map((e) => `${e.path}\0${e.contentHash}\n`).join('')
   return `sha256:${sha256(payload)}`
 }
+
+export type DecisionCorpusSnapshot = {
+  hash: `sha256:${string}`
+  entries: DecisionCorpusEntry[]
+}
+
+export function snapshotDecisionCorpus(entries: DecisionCorpusEntry[]): DecisionCorpusSnapshot {
+  const sorted = [...entries].sort((a, b) => a.path.localeCompare(b.path))
+  return {
+    hash: hashDecisionCorpus(sorted) as `sha256:${string}`,
+    entries: sorted,
+  }
+}
+
+export function changedDecisionCorpusPaths(
+  before: DecisionCorpusSnapshot,
+  after: DecisionCorpusSnapshot,
+): string[] {
+  const beforeMap = new Map(before.entries.map((entry) => [entry.path, entry.contentHash]))
+  const afterMap = new Map(after.entries.map((entry) => [entry.path, entry.contentHash]))
+  const paths = new Set([...beforeMap.keys(), ...afterMap.keys()])
+  const changed: string[] = []
+  for (const relativePath of paths) {
+    if (beforeMap.get(relativePath) !== afterMap.get(relativePath)) {
+      changed.push(relativePath)
+    }
+  }
+  return changed.sort()
+}

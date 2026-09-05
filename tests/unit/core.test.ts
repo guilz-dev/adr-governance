@@ -13,6 +13,37 @@ import { assessPromptRisk, rankRelevantAdrs } from '../../src/core/risk-signals.
 import type { ParsedAdr } from '../../src/core/types.js'
 
 describe('config', () => {
+  it('does not include requireNoAdrRationale in default config', () => {
+    expect(defaultConfig().changeGate).not.toHaveProperty('requireNoAdrRationale')
+  })
+
+  it('defaults hook timeout to 1500ms', () => {
+    expect(defaultConfig().hooks.timeoutMs).toBe(1500)
+  })
+
+  it('rejects hook timeout outside 100-1900ms', () => {
+    expect(() =>
+      parseConfig({
+        version: 2,
+        hooks: { timeoutMs: 2000 },
+      }),
+    ).toThrow(/timeoutMs/)
+    expect(() =>
+      parseConfig({
+        version: 2,
+        hooks: { timeoutMs: 99 },
+      }),
+    ).toThrow(/timeoutMs/)
+  })
+
+  it('warns when legacy requireNoAdrRationale key is present', () => {
+    const { warnings } = parseConfig({
+      version: 2,
+      changeGate: { requireNoAdrRationale: true },
+    })
+    expect(warnings).toContain('Unknown config key: changeGate.requireNoAdrRationale')
+  })
+
   it('defaults to split layout and config v2 enforce gate', () => {
     const c = defaultConfig()
     expect(c.layout.mode).toBe('split')

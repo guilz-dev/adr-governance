@@ -1,6 +1,10 @@
 import type { AdrConfig, ParsedAdr } from './types.js'
 import type { ValidationIssue } from './validation.js'
-import { parseDecisionEvidence, type DecisionEvidence } from './decision-evidence.js'
+import {
+  isDecisionEvidenceV1,
+  parseDecisionEvidence,
+  type DecisionEvidence,
+} from './decision-evidence.js'
 
 export type ChangeGateInput = {
   config: AdrConfig
@@ -9,13 +13,18 @@ export type ChangeGateInput = {
   changedProposedAdrs: ParsedAdr[]
   adrContentHashes: Map<string, string>
   expectedDecisionCorpusHash: string
+  resolvedBaseCommit: string
+  currentChangeSetDigest: string
   evidence: DecisionEvidence | null
 }
 
 const CHANGE_GATE_CODES = new Set([
   'decision-evidence-required',
   'decision-evidence-invalid',
+  'decision-evidence-legacy',
   'decision-baseline-stale',
+  'decision-base-stale',
+  'decision-changeset-stale',
   'decision-ref-not-accepted',
   'decision-ref-stale',
   'changed-proposal-unreviewed',
@@ -48,6 +57,7 @@ function isExempt(relativePath: string, exemptPaths: string[]): boolean {
 }
 
 function severityFor(config: AdrConfig, code: string): 'error' | 'warning' {
+  if (code === 'decision-evidence-legacy') return 'warning'
   if (config.changeGate.mode === 'warn' && CHANGE_GATE_CODES.has(code)) {
     return 'warning'
   }
@@ -97,6 +107,32 @@ export function evaluateChangeGate(input: ChangeGateInput): ValidationIssue[] {
   }
 
   const issues: ValidationIssue[] = []
+
+  if (isDecisionEvidenceV1(evidence)) {
+    issues.push(
+      issue(
+        config,
+        'decision-evidence-legacy',
+        'Decision evidence schema v1 is deprecated; re-run attest to produce v2',
+      ),
+    )
+  } else if (evidence.baseCommit !== input.resolvedBaseCommit) {
+    issues.push(
+      issue(
+        config,
+        'decision-base-stale',
+        'Decision evidence base commit does not match the attested base',
+      ),
+    )
+  } else if (evidence.changeSet.digest !== input.currentChangeSetDigest) {
+    issues.push(
+      issue(
+        config,
+        'decision-changeset-stale',
+        'Repository changes after attestation invalidate the decision evidence',
+      ),
+    )
+  }
 
   if (evidence.decisionCorpusHash !== input.expectedDecisionCorpusHash) {
     issues.push(

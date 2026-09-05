@@ -7,26 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-05
+
 ### Added
 
-- provider-neutral decision evidence and `attest` output for accepted-ADR or explicit no-ADR outcomes
-- config v2 `changeGate` policy and `check --base` decision-authority validation
-- decision-corpus freshness, ADR lifecycle-transition, and reciprocal supersession validation
+- DecisionEvidence v2 binds attestations to an immutable base and exact change set.
+- Turn audit resolution uses decision-corpus content instead of filesystem mtime.
+- Hook fingerprints expose metadata fallback and unavailable collection modes.
+- Runtime shims enforce a sub-two-second watchdog.
+- Generated and self-hosted GitHub Actions use full history and immutable PR base SHAs.
+- Self-hosted PR decision gate workflow (`adr-governance.yml`) in warn mode.
 
 ### Changed
 
-- proposed ADRs no longer count as implementation authority
-- after-turn hooks request one bounded audit for actual changes or likely risk without inventing semantic receipts
-- the local design specification is now the authoritative source for this repository
+- Config v2 removes the ineffective `requireNoAdrRationale` switch; rationale remains mandatory.
+- `attest` always emits DecisionEvidence schemaVersion 2.
+- `hooks.timeoutMs` defaults to 1500ms (allowed range 100–1900ms).
 
-### Fixed
+### Deprecated
 
-- decision-gate classification now exempts only concrete governance artifacts and manifest-managed generated files
-- base-corpus and base-diff read failures are fail-closed in enforce mode
-- changed legacy accepted ADRs now require acceptance metadata while unchanged legacy ADRs remain grandfathered
-- hook instructions no longer describe the removed synthetic silent-close behavior
-- after-turn detects ADR updates on filesystems that round modification times to whole seconds
-- supersession updates preserve custom frontmatter and roll back partial two-file updates
+- DecisionEvidence schemaVersion 1 remains readable with `decision-evidence-legacy` warning through v0.2.x; rejected in v0.3.0.
 
 ## [0.1.11] - 2026-08-26
 
