@@ -12,7 +12,7 @@
     ".adr-governance/schema/adr-config.schema.json": "9c04595bcd7344cbe36460947439f2f47a79df291a820c5af495c706fb4e3bab",
     ".adr-governance/schema/init-plan.schema.json": "0d23983387b14f9c41bad4ec1a8cc67498b27f3e2cd4a9f97a62aac863071c4c",
     ".adr-governance/.gitignore": "14188a31de4a645fd035797f1b2e904c60b2f1428ae555ed2a281e2431b3f2d6",
-    ".cursor/rules/adr-governance.mdc": "934d2c2cba0b7bdb2633b0beb7c78eb677d22fe8738538de1ddd4699911f3737",
+    ".cursor/rules/adr-governance.mdc": "ebbb1612521c6993f23b4f703f75cf152e849ed54e2943a3c351709b9dfa70d4",
     ".cursor/hooks/adr-governance.mjs": "aff162a65e25b103f3f413412e585f1ef1acfd6caed10e74074836a01277b506",
     ".cursor/hooks.json": "67345310e8a1bffd2cc282722a48b9f124c0f103ba31193c0586629cf0e0a95e",
     ".claude/commands/adr.md": "98c2bd6745ac563b40fb31183eb74d90fa87b0568d8b3b86eab267d13d435ede",
