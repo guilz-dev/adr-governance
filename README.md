@@ -1,5 +1,7 @@
 # adr-governance
 
+English | [日本語](./README.ja.md)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](./package.json)
 
@@ -16,6 +18,119 @@ The GitHub repository is currently **private**. Source access requires organizat
 - **Changelog:** [CHANGELOG.md](./CHANGELOG.md)
 - **Design spec:** [docs/specs/adr-governance-design.md](./docs/specs/adr-governance-design.md)
 - **Implementation status:** [docs/IMPLEMENTATION-STATUS.md](./docs/IMPLEMENTATION-STATUS.md)
+
+## How it works
+
+**adr-governance** keeps the *why* behind design decisions when coding agents (Cursor, Claude Code, Codex CLI, Gemini CLI) write code. It bundles Skill, CLI, and hooks into one package so all four runtimes share the same decision criteria and document lifecycle.
+
+### What it solves
+
+| Artifact | Role |
+|----------|------|
+| **ADR** (`docs/adr/`, `docs/proposed-adr/`) | What was decided and why |
+| **CONTEXT** (`CONTEXT.md`) | Domain term meanings |
+| **Skill** (`.agents/skills/managing-adrs/`) | Agent workflow for decisions |
+| **CLI** (`.adr-governance/bin/cli.mjs`) | Create, validate, sync |
+| **Hook** (`.adr-governance/bin/hook.mjs`) | Per-turn audit |
+
+It also avoids ADR sprawl: new ADRs require all **three criteria** (see [Principles](#principles) below).
+
+### Architecture
+
+```mermaid
+flowchart TB
+  subgraph repo [Target repository]
+    Skill[managing-adrs Skill]
+    Config[adr.config.json]
+    Docs[docs/adr + CONTEXT.md]
+    State[.adr-governance/state/]
+  end
+
+  subgraph runtimes [Four runtimes]
+    Cursor[Cursor hooks]
+    Claude[Claude Code hooks]
+    Codex[Codex hooks]
+    Gemini[Gemini hooks]
+  end
+
+  subgraph core [Shared core]
+    HookBin[hook.mjs]
+    CliBin[cli.mjs]
+  end
+
+  Cursor --> HookBin
+  Claude --> HookBin
+  Codex --> HookBin
+  Gemini --> HookBin
+  HookBin --> State
+  HookBin --> Skill
+  CliBin --> Docs
+  CliBin --> Config
+```
+
+Each runtime shim (e.g. `.cursor/hooks/adr-governance.mjs`) is a thin wrapper. All logic lives in `.adr-governance/bin/hook.mjs` — **no duplicated decision logic across four runtimes**.
+
+### Adoption flow (`init`)
+
+1. **Scan only** — analyze existing ADRs, CONTEXT, and agent config; write `init-plan.json` to an OS temp directory (**no changes to the target repo yet**)
+2. **Human reviews the plan**
+3. **`init --apply`** — merge Skill, hook bundles, `adr.config.json`, and runtime hook entries into the target repo
+
+### Per-turn lifecycle
+
+#### before-turn (before prompt submission)
+
+Each runtime's before hook (e.g. Cursor `beforeSubmitPrompt`, Claude Code `UserPromptSubmit`) calls shared logic:
+
+1. **Do not store** prompt text (SHA-256 hash only)
+2. Score keywords (architecture, auth, migration, etc.) → `risk = none | possible | likely`
+3. Match up to 5 relevant ADRs by title
+4. If `risk` is elevated, inject instructions to read the Skill
+5. Write turn state to `.adr-governance/state/turns/<turnId>.json`
+
+#### During agent work
+
+- When `risk` is `possible` or `likely`, follow the `managing-adrs` Skill to decide whether ADR/CONTEXT needs updating
+- Create a new ADR only when **all three criteria** hold:
+  1. **Hard to reverse** — meaningful cost to change later
+  2. **Surprising without context** — a future reader might undo deliberate design without knowing why
+  3. **Real trade-off** — viable alternatives existed; one was chosen for explicit reasons
+
+#### after-turn (when the turn ends)
+
+Cursor calls this from the `stop` hook; other runtimes use their after-agent hooks.
+
+| Situation | Behavior |
+|-----------|----------|
+| ADR/CONTEXT updated | OK (audit resolved) |
+| Agent ran `turn-close` | OK (receipt recorded) |
+| Elevated risk, no update | Inject up to one follow-up (configurable via `maxFollowUps`) |
+| Follow-up limit exceeded | **Silent close** (auto-record a reason such as `reversible`) |
+| No elevated risk | Finish normally |
+
+**Hooks fail-open** — a broken hook does not block the agent.  
+**CI `check` fails closed** — document integrity is enforced mechanically.
+
+### CLI and CI
+
+`check` validates:
+
+- ADR frontmatter, status, and Open Points
+- Duplicate numbering (including cross-branch collisions with `--base origin/main`)
+- Broken CONTEXT links
+- **Drift** against `manifest.json` (generated files edited by hand)
+- Missing hook entries
+
+After `init`, target repos get `.github/workflows/adr-governance.yml`, which runs `check --base origin/main` on PRs and pushes.
+
+### Design principles
+
+1. **Do not persist prompt or transcript bodies** — hashes and metadata only
+2. **Do not invent design rationale from code** — during `init`, separate observed facts from confirmed reasons
+3. **Update accepted ADRs via supersede** — conclusion changes need a new ADR; mark the old one superseded
+4. **Hook identity** — Cursor uses `conversation_id` / `generation_id`; others use `session_id`. If unavailable, hash `transcript_path`; if still unavailable, fall back to one repo-wide scope (parallel sessions not isolated)
+
+See [docs/specs/adr-governance-design.md](./docs/specs/adr-governance-design.md) for the full design spec.
 
 ## Quick start (target project)
 
