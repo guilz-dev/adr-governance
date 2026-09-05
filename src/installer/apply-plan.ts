@@ -66,6 +66,12 @@ export async function applyPlanOperations(
   operations: InitPlanOperation[],
 ): Promise<void> {
   for (const op of operations) {
+    if (!isPathInsideRepo(repoRoot, op.path) && op.path !== '') {
+      throw new Error(`Path escapes repository root: ${op.path}`)
+    }
+    if (op.path.startsWith('/') || op.path.includes('..')) {
+      throw new Error(`Invalid plan path: ${op.path}`)
+    }
     await assertNoSymlinkInPath(repoRoot, op.path)
 
     if (op.kind === 'create') {
