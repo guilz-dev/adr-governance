@@ -105,7 +105,7 @@ describe('change-gate', () => {
   })
 
   it('downgrades to warning in warn mode', () => {
-    const warnConfig = defaultConfig({ changeGate: { mode: 'warn', exemptPaths: [], requireNoAdrRationale: true } })
+    const warnConfig = defaultConfig({ changeGate: { mode: 'warn', exemptPaths: [] } })
     const issues = evaluateChangeGate({
       ...gateBase,
       config: warnConfig,

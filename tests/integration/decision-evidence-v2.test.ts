@@ -12,7 +12,7 @@ import { gitCommit, initTestGitRepo } from '../helpers/git-test-repo.js'
 async function setupRepo(): Promise<{ repo: string; baseSha: string; config: ReturnType<typeof defaultConfig> }> {
   const repo = await mkdtemp(path.join(tmpdir(), 'adr-evidence-v2-'))
   initTestGitRepo(repo)
-  const config = defaultConfig({ changeGate: { mode: 'enforce', exemptPaths: [], requireNoAdrRationale: true } })
+  const config = defaultConfig({ changeGate: { mode: 'enforce', exemptPaths: [] } })
   await mkdir(path.join(repo, 'docs/adr'), { recursive: true })
   await mkdir(path.join(repo, 'docs/proposed-adr'), { recursive: true })
   await mkdir(path.join(repo, 'src'), { recursive: true })
@@ -99,7 +99,7 @@ describe('decision evidence v2 integration', () => {
     const evidencePath = path.join(repo, 'evidence.json')
     await writeFile(evidencePath, JSON.stringify(v1, null, 2))
 
-    const warnConfig = defaultConfig({ changeGate: { mode: 'warn', exemptPaths: [], requireNoAdrRationale: true } })
+    const warnConfig = defaultConfig({ changeGate: { mode: 'warn', exemptPaths: [] } })
     await writeFile(path.join(repo, 'adr.config.json'), JSON.stringify(warnConfig, null, 2))
     const result = await runCheck(repo, { baseRef: baseSha, evidencePath })
     expect(result.issues.map((issue) => issue.code)).toContain('decision-evidence-legacy')

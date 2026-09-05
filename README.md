@@ -121,7 +121,13 @@ Cursor calls this from the `stop` hook; other runtimes use their after-agent hoo
 - **Drift** against `manifest.json` (generated files edited by hand)
 - Missing hook entries
 
-After `init`, target repos get `.github/workflows/adr-governance.yml`, which runs `check --base origin/main` on PRs and pushes.
+After `init`, target repos get `.github/workflows/adr-governance.yml`, which runs `check` with the immutable PR base SHA on pull requests.
+
+### v0.2.0 decision evidence migration
+
+- `attest` now emits **DecisionEvidence v2** with `baseCommit` and `changeSet.digest`. Re-run `attest` after any code change before opening or updating a PR.
+- SchemaVersion 1 evidence still parses during v0.2.x but triggers a `decision-evidence-legacy` warning; v0.3.0 will reject it.
+- Hook stderr may show a one-time **metadata fallback** warning when untracked file budgets are exceeded; CI `check --base` remains authoritative.
 
 ### Design principles
 

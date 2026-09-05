@@ -7,7 +7,6 @@ function defaultChangeGate(
   return {
     mode: 'enforce',
     exemptPaths: [],
-    requireNoAdrRationale: true,
     ...overrides,
   }
 }
@@ -76,9 +75,6 @@ function parseChangeGate(raw: unknown, version: number): AdrConfig['changeGate']
   }
   if (Array.isArray(obj.exemptPaths)) {
     gate.exemptPaths = obj.exemptPaths.filter((x): x is string => typeof x === 'string')
-  }
-  if (typeof obj.requireNoAdrRationale === 'boolean') {
-    gate.requireNoAdrRationale = obj.requireNoAdrRationale
   }
   return gate
 }
@@ -152,11 +148,7 @@ export function parseConfig(raw: unknown): { config: AdrConfig; warnings: string
     'maxFollowUps',
     'timeoutMs',
   ])
-  warnUnknownNestedKeys(warnings, 'changeGate', obj.changeGate, [
-    'mode',
-    'exemptPaths',
-    'requireNoAdrRationale',
-  ])
+  warnUnknownNestedKeys(warnings, 'changeGate', obj.changeGate, ['mode', 'exemptPaths'])
   warnUnknownNestedKeys(warnings, 'analysis', obj.analysis, [
     'maxFiles',
     'maxBytesPerFile',

@@ -19,11 +19,10 @@
     },
     "changeGate": {
       "type": "object",
-      "required": ["mode", "exemptPaths", "requireNoAdrRationale"],
+      "required": ["mode", "exemptPaths"],
       "properties": {
         "mode": { "enum": ["off", "warn", "enforce"] },
-        "exemptPaths": { "type": "array", "items": { "type": "string" } },
-        "requireNoAdrRationale": { "type": "boolean" }
+        "exemptPaths": { "type": "array", "items": { "type": "string" } }
       }
     },
     "configV1": {

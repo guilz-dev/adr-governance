@@ -22,7 +22,6 @@ export type LayoutMode = 'split' | 'single'
 export type ChangeGateConfig = {
   mode: 'off' | 'warn' | 'enforce'
   exemptPaths: string[]
-  requireNoAdrRationale: boolean
 }
 
 export type AdrConfig = {

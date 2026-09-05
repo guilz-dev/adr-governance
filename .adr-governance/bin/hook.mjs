@@ -74,7 +74,6 @@ function defaultChangeGate(overrides = {}) {
   return {
     mode: "enforce",
     exemptPaths: [],
-    requireNoAdrRationale: true,
     ...overrides
   };
 }
@@ -141,9 +140,6 @@ function parseChangeGate(raw, version) {
   if (Array.isArray(obj.exemptPaths)) {
     gate.exemptPaths = obj.exemptPaths.filter((x) => typeof x === "string");
   }
-  if (typeof obj.requireNoAdrRationale === "boolean") {
-    gate.requireNoAdrRationale = obj.requireNoAdrRationale;
-  }
   return gate;
 }
 function warnUnknownNestedKeys(warnings, section, raw, knownKeys) {
@@ -201,11 +197,7 @@ function parseConfig(raw) {
     "maxFollowUps",
     "timeoutMs"
   ]);
-  warnUnknownNestedKeys(warnings, "changeGate", obj.changeGate, [
-    "mode",
-    "exemptPaths",
-    "requireNoAdrRationale"
-  ]);
+  warnUnknownNestedKeys(warnings, "changeGate", obj.changeGate, ["mode", "exemptPaths"]);
   warnUnknownNestedKeys(warnings, "analysis", obj.analysis, [
     "maxFiles",
     "maxBytesPerFile",
