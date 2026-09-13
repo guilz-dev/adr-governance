@@ -16,6 +16,19 @@ export type Manifest = {
 
 export const GENERATOR_VERSION = '0.2.0'
 
+// These files contain user-owned policy/settings alongside managed registrations.
+const USER_MANAGED_FILES = new Set([
+  'adr.config.json',
+  '.cursor/hooks.json',
+  '.claude/settings.json',
+  '.codex/hooks.json',
+  '.gemini/settings.json',
+])
+
+export function isUserManagedFile(relativePath: string): boolean {
+  return USER_MANAGED_FILES.has(relativePath)
+}
+
 export async function hashFile(absPath: string): Promise<string> {
   const content = await readFile(absPath, 'utf8')
   return sha256(content)
@@ -42,6 +55,7 @@ export async function buildManifest(repoRoot: string, packageRoot: string): Prom
   ]
 
   for (const rel of targets) {
+    if (isUserManagedFile(rel)) continue
     const abs = path.join(repoRoot, rel)
     if (!existsSync(abs)) continue
     const s = await stat(abs)

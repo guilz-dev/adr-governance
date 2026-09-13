@@ -6,8 +6,7 @@ import { buildWorkingDecisionCorpus, changedDecisionCorpusPaths, snapshotDecisio
 import { findRepoRoot, readConfig, STATE_DIR } from '../core/repository-state.js'
 import { decideAfterTurn } from './common.js'
 import { loadCurrentTurnState } from './before-turn.js'
-import { buildRepositoryFingerprint, repositoryFingerprintChanged } from '../core/fingerprint.js'
-import { gitLsFiles } from '../cli/git.js'
+import { buildAuditRepositoryFingerprint, repositoryFingerprintChanged } from '../core/fingerprint.js'
 import {
   incrementAuditChainFollowUpForScope,
   loadAuditChainForScope,
@@ -74,11 +73,7 @@ export async function runAfterTurn(input: AfterTurnInput): Promise<AfterTurnResu
     docsUpdated = false
   }
 
-  const afterFingerprint = await buildRepositoryFingerprint(
-    repoRoot,
-    await gitLsFiles(repoRoot),
-    config,
-  )
+  const afterFingerprint = await buildAuditRepositoryFingerprint(repoRoot)
   const repositoryChanged = repositoryFingerprintChanged(state.beforeFingerprint, afterFingerprint)
 
   const decision = decideAfterTurn(

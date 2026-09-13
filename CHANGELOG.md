@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Bind gate policy and generated exemptions to the immutable base; run PR checks with its verifier and re-evaluate edited PR bodies.
+- Share canonical rename/path classification with evidence hashing, normalize Git clean-filter bytes and modes, and make corpus ordering and recursive ADR scope deterministic.
+- Preserve user config/settings during sync and ADR bodies/frontmatter during promotion.
+- Deliver session-specific receipt commands, stream large tracked diffs, skip unused watch hashes, and protect locks from competing stale cleanup.
+- Keep runtime import failures fail-open and reserve watchdog startup/termination time in Codex/Gemini registrations.
+
+### Compatibility
+
+- Re-attest open PRs after upgrading; existing workflows require the trusted-base runner and `edited` update. See [migration notes](docs/reliability-fixes-2026-09-13.md).
+- The v0.2.x v1-evidence warning window remains unchanged. Human acceptance metadata is checked against trusted policy, without claiming authenticated human identity.
+
 ## [0.2.0] - 2026-09-05
 
 ### Added

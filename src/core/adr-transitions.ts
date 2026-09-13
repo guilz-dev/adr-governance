@@ -16,6 +16,7 @@ function byId(adrs: ParsedAdr[]): Map<string, ParsedAdr> {
 export function validateAuthorityMetadata(
   adr: ParsedAdr,
   isNewOrChanged: boolean,
+  requireHumanAcceptance = false,
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = []
   const { status, acceptance } = adr.frontmatter
@@ -42,12 +43,17 @@ export function validateAuthorityMetadata(
     })
   }
 
+  if (isNewOrChanged && status === 'accepted' && acceptance && requireHumanAcceptance && acceptance !== 'human') {
+    issues.push({ severity: 'error', code: 'human-acceptance-required', message: 'Trusted policy requires acceptance: human for new or changed accepted ADRs', path: adr.path })
+  }
+
   return issues
 }
 
 export function validateAdrTransitions(
   base: ParsedAdr[],
   head: ParsedAdr[],
+  requireHumanAcceptance = false,
 ): ValidationIssue[] {
   const baseById = byId(base)
   const issues: ValidationIssue[] = []
@@ -61,7 +67,7 @@ export function validateAdrTransitions(
     const isNewOrChanged =
       !baseAdr || baseAdr.frontmatter.status !== headAdr.frontmatter.status || contentChanged
 
-    issues.push(...validateAuthorityMetadata(headAdr, isNewOrChanged))
+    issues.push(...validateAuthorityMetadata(headAdr, isNewOrChanged, requireHumanAcceptance))
 
     if (!baseAdr) continue
 

@@ -1,6 +1,7 @@
-import { mkdir, open, readFile, readdir, rm, lstat, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, rm, rmdir, lstat, unlink, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 
 import { LOCKS_DIR } from '../core/repository-state.js'
 
@@ -10,6 +11,7 @@ export type LockInfo = {
   pid: number
   startedAt: string
   command: string
+  ownerId?: string
 }
 
 export async function acquireLock(repoRoot: string, name: string, command: string): Promise<() => Promise<void>> {
@@ -19,50 +21,89 @@ export async function acquireLock(repoRoot: string, name: string, command: strin
 
   await cleanupStaleLocks(lockDir)
 
+  const ownerId = randomUUID()
+  const ownerFile = `owner-${ownerId}.json`
+  const pendingPath = path.join(lockDir, `${name}.${ownerId}.pending`)
   try {
-    const handle = await open(lockPath, 'wx')
+    // Publish only a populated directory. rename cannot replace a populated lock,
+    // and stale cleanup cannot rmdir a newly published owner's directory.
+    await mkdir(pendingPath)
     const info: LockInfo = {
       pid: process.pid,
       startedAt: new Date().toISOString(),
       command,
+      ownerId,
     }
-    await handle.writeFile(JSON.stringify(info, null, 2))
-    await handle.close()
+    await writeFile(path.join(pendingPath, ownerFile), JSON.stringify(info, null, 2))
+    await rename(pendingPath, lockPath)
   } catch {
     throw new Error(`Could not acquire lock: ${name}. Another command may be running.`)
+  } finally {
+    await rm(pendingPath, { recursive: true, force: true })
   }
 
   return async () => {
-    if (existsSync(lockPath)) {
-      await unlink(lockPath)
-    }
+    await removeLockOwner(lockPath, ownerFile)
   }
 }
 
-async function cleanupStaleLocks(lockDir: string): Promise<void> {
-  if (!existsSync(lockDir)) return
-  const entries = await readdir(lockDir)
-  const now = Date.now()
+async function removeLockOwner(lockPath: string, ownerFile: string): Promise<void> {
+  try {
+    await unlink(path.join(lockPath, ownerFile))
+  } catch (error) {
+    if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) return
+    throw error
+  }
+  try {
+    await rmdir(lockPath)
+  } catch (error) {
+    // A replacement lock always has its own distinct owner file and is not empty.
+    if (!['ENOENT', 'ENOTEMPTY', 'EEXIST', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+  }
+}
 
-  for (const entry of entries) {
-    const lockPath = path.join(lockDir, entry)
-    try {
-      const content = await readFile(lockPath, 'utf8')
-      const info = JSON.parse(content) as LockInfo
-      const age = now - new Date(info.startedAt).getTime()
-      const stale = age > LOCK_STALE_MS
-      let alive = false
+async function isAbandonedLock(metadataPath: string, now: number): Promise<boolean> {
+  const infoStat = await lstat(metadataPath)
+  if (!infoStat.isFile() || now - infoStat.mtimeMs <= LOCK_STALE_MS) return false
+  try {
+    const info = JSON.parse(await readFile(metadataPath, 'utf8')) as LockInfo
+    if (Number.isInteger(info.pid) && info.pid > 0) {
       try {
         process.kill(info.pid, 0)
-        alive = true
-      } catch {
-        alive = false
+        return false
+      } catch (error) {
+        // Permission denial (or any error other than a missing PID) is not proof of death.
+        return (error as NodeJS.ErrnoException).code === 'ESRCH'
       }
-      if (!alive && stale) {
+    }
+  } catch {
+    // Incomplete legacy metadata is reclaimable only after the file itself ages out.
+  }
+  return true
+}
+
+async function cleanupStaleLocks(lockDir: string): Promise<void> {
+  const entries = await readdir(lockDir)
+  const now = Date.now()
+  for (const entry of entries) {
+    if (!entry.endsWith('.lock')) continue
+    const lockPath = path.join(lockDir, entry)
+    try {
+      const observed = await lstat(lockPath)
+      if (observed.isDirectory()) {
+        const owners = await readdir(lockPath)
+        if (owners.length !== 1 || !/^owner-[a-f0-9-]+\.json$/.test(owners[0]!)) continue
+        const ownerFile = owners[0]!
+        if (await isAbandonedLock(path.join(lockPath, ownerFile), now)) {
+          await removeLockOwner(lockPath, ownerFile)
+        }
+      } else if (await isAbandonedLock(lockPath, now)) {
+        // A new lock is a directory: even another cleaner that observed this old
+        // legacy file cannot unlink a replacement after publication.
         await unlink(lockPath)
       }
     } catch {
-      await unlink(lockPath).catch(() => undefined)
+      // A competing cleanup may already have removed the abandoned owner.
     }
   }
 }
@@ -72,7 +113,6 @@ export async function atomicWriteFile(targetPath: string, content: string): Prom
   await mkdir(dir, { recursive: true })
   const tempPath = `${targetPath}.${process.pid}.tmp`
   await writeFile(tempPath, content, 'utf8')
-  const { rename } = await import('node:fs/promises')
   await rename(tempPath, targetPath)
 }
 

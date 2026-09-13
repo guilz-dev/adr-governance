@@ -109,6 +109,37 @@ export function buildAdrContent(
   title: string,
   body: string,
 ): string {
-  const normalizedBody = body.startsWith('#') ? body : `# ${title}\n\n${body}`
-  return serializeFrontmatter(frontmatter) + normalizedBody.replace(/^\n+/, '')
+  const normalizedBody = TITLE_RE.test(body) ? body : `# ${title}\n\n${body}`
+  return serializeFrontmatter(frontmatter) + normalizedBody
+}
+
+const RAW_FRONTMATTER_RE = /^(---\r?\n)([\s\S]*?)(\r?\n---)([\s\S]*)$/
+
+export function updateFrontmatter(content: string, updates: Record<string, string>): string {
+  const match = RAW_FRONTMATTER_RE.exec(content)
+  if (!match) throw new Error('Could not update ADR frontmatter')
+
+  const opening = match[1] ?? ''
+  const yaml = match[2] ?? ''
+  const closing = match[3] ?? ''
+  const body = match[4] ?? ''
+  const newline = yaml.includes('\r\n') ? '\r\n' : '\n'
+  const pending = new Map(Object.entries(updates))
+  const lines = yaml.split(/\r?\n/).map((line) => {
+    const field = /^(\s*)([^:\s][^:]*?)\s*:/.exec(line)
+    if (!field) return line
+
+    const key = field[2]?.trim()
+    if (!key || !pending.has(key)) return line
+
+    const value = pending.get(key)
+    pending.delete(key)
+    return `${field[1] ?? ''}${key}: ${value}`
+  })
+
+  for (const [key, value] of pending) {
+    lines.push(`${key}: ${value}`)
+  }
+
+  return `${opening}${lines.join(newline)}${closing}${body}`
 }

@@ -7,7 +7,7 @@
             "name": "adr-governance-before-turn",
             "type": "command",
             "command": "node \"$GEMINI_PROJECT_DIR/.gemini/hooks/adr-governance.mjs\" before-turn",
-            "timeout": 2000
+            "timeout": 3000
           }
         ]
       }
@@ -19,7 +19,7 @@
             "name": "adr-governance-after-turn",
             "type": "command",
             "command": "node \"$GEMINI_PROJECT_DIR/.gemini/hooks/adr-governance.mjs\" after-turn",
-            "timeout": 2000
+            "timeout": 3000
           }
         ]
       }

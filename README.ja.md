@@ -179,7 +179,7 @@ node .adr-governance/bin/cli.mjs create --status proposed --title "..." --body-f
 node .adr-governance/bin/cli.mjs promote ADR-0007 [--approval human]
 node .adr-governance/bin/cli.mjs supersede ADR-0002 --by ADR-0008
 node .adr-governance/bin/cli.mjs sync --from /path/to/adr-governance
-node .adr-governance/bin/cli.mjs turn-close --outcome no-change --reason reversible
+node .adr-governance/bin/cli.mjs turn-close --outcome no-change --reason reversible --session-id '<hookが提示したID>'
 ```
 
 ## 原則
@@ -207,3 +207,7 @@ Claude Code、Codex CLI、Gemini CLI の hook payload は `session_id` を安定
 ## ライセンス
 
 MIT © [guilz-dev](./LICENSE)
+
+### 2026-09-13 調査に基づく信頼性修正
+
+`check --base` はbase側の設定とmanifestで判定し、CIもbase側のCLIを実行します。更新後は再attestし、既存workflowに `edited` とbase側CLIの実行手順を反映してください。設定ファイルの正当な編集はsyncで保持されます。全指摘の対応状況と導入手順は[修正・移行ノート](docs/reliability-fixes-2026-09-13.md)を参照してください。v1証跡のv0.2.x互換期間は維持します。

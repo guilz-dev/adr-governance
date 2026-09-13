@@ -30,26 +30,38 @@ export async function listAdrFiles(dir: string): Promise<string[]> {
 
 export async function loadAllAdrs(repoRoot: string, config: AdrConfig): Promise<ParsedAdr[]> {
   const adrs: ParsedAdr[] = []
-  const acceptedDir = path.join(repoRoot, config.layout.acceptedDir)
-  const proposedDir = path.join(repoRoot, config.layout.proposedDir)
-
-  for (const name of await listAdrFiles(acceptedDir)) {
-    const rel = path.join(config.layout.acceptedDir, name)
+  for (const rel of await listWorkingAdrPaths(repoRoot, config)) {
     const content = await readFile(path.join(repoRoot, rel), 'utf8')
-    const parsed = parseAdrFromPath(rel, content, 'accepted', config)
+    const parsed = parseAdrFromPath(rel, content, adrDirectoryKind(rel, config)!, config)
     if (parsed) adrs.push(parsed)
   }
 
-  if (config.layout.mode === 'split' || config.layout.acceptedDir !== config.layout.proposedDir) {
-    for (const name of await listAdrFiles(proposedDir)) {
-      const rel = path.join(config.layout.proposedDir, name)
-      const content = await readFile(path.join(repoRoot, rel), 'utf8')
-      const parsed = parseAdrFromPath(rel, content, 'proposed', config)
-      if (parsed) adrs.push(parsed)
+  return adrs.sort((a, b) => a.number - b.number)
+}
+
+/** Longest directory wins when the proposed layout is nested inside accepted. */
+export function adrDirectoryKind(relativePath: string, config: AdrConfig): 'accepted' | 'proposed' | null {
+  const directories: Array<[string, 'accepted' | 'proposed']> = [[config.layout.acceptedDir, 'accepted']]
+  if (config.layout.proposedDir !== config.layout.acceptedDir) {
+    directories.push([config.layout.proposedDir, 'proposed'])
+  }
+  directories.sort((a, b) => b[0].length - a[0].length)
+  return directories.find(([dir]) => relativePath.startsWith(`${dir.replace(/\/$/, '')}/`))?.[1] ?? null
+}
+
+export async function listWorkingAdrPaths(repoRoot: string, config: AdrConfig): Promise<string[]> {
+  const paths = new Set<string>()
+  async function visit(relativeDir: string): Promise<void> {
+    const abs = path.join(repoRoot, relativeDir)
+    if (!existsSync(abs)) return
+    for (const entry of await readdir(abs, { withFileTypes: true })) {
+      const rel = path.posix.join(relativeDir, entry.name)
+      if (entry.isDirectory()) await visit(rel)
+      else if (entry.isFile() && entry.name.endsWith('.md') && entry.name !== 'README.md') paths.add(rel)
     }
   }
-
-  return adrs.sort((a, b) => a.number - b.number)
+  for (const dir of new Set([config.layout.acceptedDir, config.layout.proposedDir])) await visit(dir)
+  return [...paths].sort((a, b) => Buffer.from(a).compare(Buffer.from(b)))
 }
 
 export async function readConfig(repoRoot: string): Promise<{ raw: string; path: string } | null> {

@@ -137,18 +137,42 @@ function canPromoteToAccepted(adr, requireHumanAcceptance, approval) {
   return { ok: true };
 }
 function buildAdrContent(frontmatter, title, body) {
-  const normalizedBody = body.startsWith("#") ? body : `# ${title}
+  const normalizedBody = TITLE_RE.test(body) ? body : `# ${title}
 
 ${body}`;
-  return serializeFrontmatter(frontmatter) + normalizedBody.replace(/^\n+/, "");
+  return serializeFrontmatter(frontmatter) + normalizedBody;
 }
-var FRONTMATTER_RE, TITLE_RE, OPEN_POINTS_RE;
+function updateFrontmatter(content, updates) {
+  const match = RAW_FRONTMATTER_RE.exec(content);
+  if (!match) throw new Error("Could not update ADR frontmatter");
+  const opening = match[1] ?? "";
+  const yaml = match[2] ?? "";
+  const closing = match[3] ?? "";
+  const body = match[4] ?? "";
+  const newline = yaml.includes("\r\n") ? "\r\n" : "\n";
+  const pending = new Map(Object.entries(updates));
+  const lines = yaml.split(/\r?\n/).map((line) => {
+    const field = /^(\s*)([^:\s][^:]*?)\s*:/.exec(line);
+    if (!field) return line;
+    const key = field[2]?.trim();
+    if (!key || !pending.has(key)) return line;
+    const value = pending.get(key);
+    pending.delete(key);
+    return `${field[1] ?? ""}${key}: ${value}`;
+  });
+  for (const [key, value] of pending) {
+    lines.push(`${key}: ${value}`);
+  }
+  return `${opening}${lines.join(newline)}${closing}${body}`;
+}
+var FRONTMATTER_RE, TITLE_RE, OPEN_POINTS_RE, RAW_FRONTMATTER_RE;
 var init_lifecycle = __esm({
   "src/core/lifecycle.ts"() {
     "use strict";
     FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
     TITLE_RE = /^#\s+(.+)$/m;
     OPEN_POINTS_RE = /^##\s+Open Points\b/im;
+    RAW_FRONTMATTER_RE = /^(---\r?\n)([\s\S]*?)(\r?\n---)([\s\S]*)$/;
   }
 });
 
@@ -485,20 +509,25 @@ __export(git_diff_exports, {
   listChangedPaths: () => listChangedPaths,
   listSnapshotChangedPaths: () => listSnapshotChangedPaths,
   readBlobAtRef: () => readBlobAtRef,
+  readCleanWorktreeBlob: () => readCleanWorktreeBlob,
   readFileAtRef: () => readFileAtRef,
+  readGitBoolean: () => readGitBoolean,
+  readIndexMode: () => readIndexMode,
   readModeAtRef: () => readModeAtRef,
   refExists: () => refExists,
   resolveCommit: () => resolveCommit,
   resolveMergeBase: () => resolveMergeBase
 });
 import { execFile as execFile2 } from "node:child_process";
-import { lstat as lstat3 } from "node:fs/promises";
+import { mkdtemp, rm as rm2 } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path11 from "node:path";
 import { promisify as promisify2 } from "node:util";
 async function git(repoRoot, args) {
   const { stdout } = await execFileAsync2("git", args, {
     cwd: repoRoot,
-    maxBuffer: 10 * 1024 * 1024
+    maxBuffer: 10 * 1024 * 1024,
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_LITERAL_PATHSPECS: "1" }
   });
   return stdout;
 }
@@ -522,12 +551,6 @@ async function shouldIncludePath(repoRoot, relativePath) {
   const normalized = normalizeRepoPath(relativePath);
   if (!normalized || normalized.startsWith(STATE_PREFIX)) return false;
   if (await isIgnored(repoRoot, normalized)) return false;
-  const abs = path11.join(repoRoot, normalized);
-  try {
-    const info = await lstat3(abs);
-    if (info.isDirectory()) return false;
-  } catch {
-  }
   return true;
 }
 async function resolveCommit(repoRoot, ref) {
@@ -559,39 +582,17 @@ async function listSnapshotChangedPaths(repoRoot, baseRef) {
   for (const relativePath of parseNullSeparatedPaths(diff)) {
     if (await shouldIncludePath(repoRoot, relativePath)) paths.add(relativePath);
   }
-  const status = await git(repoRoot, ["status", "--porcelain", "-z", "--untracked-files=all"]);
-  const entries = status.split("\0").filter((entry) => entry.length > 0);
-  for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i];
+  const status = await git(repoRoot, [
+    "status",
+    "--porcelain",
+    "-z",
+    "--no-renames",
+    "--untracked-files=all"
+  ]);
+  for (const entry of status.split("\0")) {
     if (entry.length < 4) continue;
-    const code = entry.slice(0, 2);
-    const raw = entry.slice(3);
-    if (code.startsWith("R") && raw.includes(" -> ")) {
-      const [from, to] = raw.split(" -> ");
-      if (from && await shouldIncludePath(repoRoot, from)) {
-        paths.add(normalizeRepoPath(from));
-      }
-      if (to && await shouldIncludePath(repoRoot, to)) {
-        paths.add(normalizeRepoPath(to));
-      }
-      continue;
-    }
-    if (code.startsWith("R") && !raw.includes(" -> ")) {
-      if (raw && await shouldIncludePath(repoRoot, raw)) {
-        paths.add(normalizeRepoPath(raw));
-      }
-      const source = entries[i + 1];
-      if (source && !source.includes(" ")) {
-        if (await shouldIncludePath(repoRoot, source)) {
-          paths.add(normalizeRepoPath(source));
-        }
-        i += 1;
-      }
-      continue;
-    }
-    if (raw && await shouldIncludePath(repoRoot, raw)) {
-      paths.add(normalizeRepoPath(raw));
-    }
+    const relativePath = entry.slice(3);
+    if (await shouldIncludePath(repoRoot, relativePath)) paths.add(relativePath);
   }
   return [...paths].sort((a, b) => Buffer.from(a).compare(Buffer.from(b)));
 }
@@ -614,27 +615,59 @@ async function readModeAtRef(repoRoot, ref, relativePath) {
     const output = (await git(repoRoot, ["ls-tree", ref, "--", normalized])).trim();
     if (!output) return null;
     const mode = output.split(/\s+/)[0];
-    if (mode === "100644" || mode === "100755" || mode === "120000") return mode;
+    if (mode === "100644" || mode === "100755" || mode === "120000" || mode === "160000") return mode;
     return null;
   } catch {
     return null;
   }
 }
-function parsePathList(output) {
-  return output.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
-}
 async function listChangedPaths(repoRoot, baseRef) {
-  const paths = /* @__PURE__ */ new Set();
-  const diff = await git(repoRoot, ["diff", "--name-only", `${baseRef}...HEAD`]);
-  for (const p of parsePathList(diff)) paths.add(p);
-  const status = await git(repoRoot, ["status", "--porcelain", "-u", "--untracked-files=all"]);
-  for (const line of status.split("\n")) {
-    if (!line.trim()) continue;
-    const raw = line.slice(3).trim();
-    const filePath = raw.includes(" -> ") ? raw.split(" -> ").pop() ?? raw : raw;
-    if (filePath) paths.add(filePath);
+  return listSnapshotChangedPaths(repoRoot, baseRef);
+}
+async function readCleanWorktreeBlob(repoRoot, relativePath) {
+  const objectDirectory = await mkdtemp(path11.join(tmpdir(), "adr-snapshot-objects-"));
+  try {
+    const sourceObjects = path11.resolve(repoRoot, (await git(repoRoot, ["rev-parse", "--git-path", "objects"])).trim());
+    const env = {
+      ...process.env,
+      GIT_OPTIONAL_LOCKS: "0",
+      GIT_OBJECT_DIRECTORY: objectDirectory,
+      // Git accepts C-quoted paths; quoting also handles path-list separators.
+      GIT_ALTERNATE_OBJECT_DIRECTORIES: JSON.stringify(sourceObjects)
+    };
+    const { stdout: oid } = await execFileAsync2("git", [
+      "hash-object",
+      "-w",
+      `--path=${relativePath}`,
+      "--",
+      path11.join(repoRoot, relativePath)
+    ], { cwd: repoRoot, env, maxBuffer: 10 * 1024 * 1024 });
+    const { stdout } = await execFileAsync2("git", ["cat-file", "blob", oid.trim()], {
+      // Match readFile's current-side behavior: buffer the complete file without
+      // imposing a subprocess output limit on otherwise valid large changes.
+      cwd: repoRoot,
+      env,
+      encoding: "buffer",
+      maxBuffer: Infinity
+    });
+    return stdout;
+  } finally {
+    await rm2(objectDirectory, { recursive: true, force: true });
   }
-  return [...paths].sort();
+}
+async function readIndexMode(repoRoot, relativePath) {
+  const output = await git(repoRoot, ["ls-files", "--stage", "-z", "--", relativePath]);
+  const entry = output.split("\0").find((line) => line.split("	")[0]?.endsWith(" 0"));
+  const mode = entry?.split(" ")[0];
+  return mode === "100644" || mode === "100755" || mode === "120000" || mode === "160000" ? mode : null;
+}
+async function readGitBoolean(repoRoot, key, fallback) {
+  try {
+    return (await git(repoRoot, ["config", "--bool", "--get", key])).trim() === "true";
+  } catch (error) {
+    if (error.code === 1) return fallback;
+    throw error;
+  }
 }
 async function readFileAtRef(repoRoot, ref, relativePath) {
   const blob = await readBlobAtRef(repoRoot, ref, relativePath);
@@ -697,7 +730,7 @@ import { fileURLToPath } from "node:url";
 // src/cli/commands/init.ts
 import { mkdir as mkdir3, readFile as readFile8, writeFile as writeFile2 } from "node:fs/promises";
 import path10 from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomUUID as randomUUID2 } from "node:crypto";
 import os from "node:os";
 
 // src/core/config.ts
@@ -708,6 +741,30 @@ function defaultChangeGate(overrides = {}) {
     exemptPaths: [],
     ...overrides
   };
+}
+function parseRiskSignals(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return void 0;
+  const obj = raw;
+  const riskSignals = {};
+  if (Array.isArray(obj.highSignalTerms)) {
+    riskSignals.highSignalTerms = obj.highSignalTerms.filter(
+      (x) => typeof x === "string" && x.trim().length > 0
+    );
+  }
+  if (Array.isArray(obj.additionalTerms)) {
+    riskSignals.additionalTerms = obj.additionalTerms.filter(
+      (x) => typeof x === "string" && x.trim().length > 0
+    );
+  }
+  if (Array.isArray(obj.watchPaths)) {
+    riskSignals.watchPaths = obj.watchPaths.filter(
+      (x) => typeof x === "string" && x.trim().length > 0
+    );
+  }
+  if (riskSignals.highSignalTerms === void 0 && riskSignals.additionalTerms === void 0 && riskSignals.watchPaths === void 0) {
+    return void 0;
+  }
+  return riskSignals;
 }
 function defaultConfig(overrides = {}) {
   const base = {
@@ -759,7 +816,8 @@ function defaultConfig(overrides = {}) {
     documents: { ...base.documents, ...overrides.documents },
     hooks: { ...base.hooks, ...overrides.hooks },
     changeGate: { ...base.changeGate, ...overrides.changeGate },
-    analysis: { ...base.analysis, ...overrides.analysis }
+    analysis: { ...base.analysis, ...overrides.analysis },
+    riskSignals: overrides.riskSignals
   };
 }
 function parseChangeGate(raw, version) {
@@ -795,7 +853,8 @@ function parseConfig(raw) {
     "documents",
     "hooks",
     "changeGate",
-    "analysis"
+    "analysis",
+    "riskSignals"
   ]);
   for (const key of Object.keys(obj)) {
     if (!knownKeys.has(key)) {
@@ -834,6 +893,11 @@ function parseConfig(raw) {
     "maxFiles",
     "maxBytesPerFile",
     "exclude"
+  ]);
+  warnUnknownNestedKeys(warnings, "riskSignals", obj.riskSignals, [
+    "highSignalTerms",
+    "additionalTerms",
+    "watchPaths"
   ]);
   const config = defaultConfig({ version });
   if (obj.$schema !== void 0) {
@@ -890,6 +954,7 @@ function parseConfig(raw) {
       config.analysis.exclude = a.exclude.filter((x) => typeof x === "string");
     }
   }
+  config.riskSignals = parseRiskSignals(obj.riskSignals);
   return { config, warnings };
 }
 function configForSingleDir(dir) {
@@ -1036,23 +1101,34 @@ async function listAdrFiles(dir) {
 }
 async function loadAllAdrs(repoRoot, config) {
   const adrs = [];
-  const acceptedDir = path2.join(repoRoot, config.layout.acceptedDir);
-  const proposedDir = path2.join(repoRoot, config.layout.proposedDir);
-  for (const name of await listAdrFiles(acceptedDir)) {
-    const rel = path2.join(config.layout.acceptedDir, name);
+  for (const rel of await listWorkingAdrPaths(repoRoot, config)) {
     const content = await readFile2(path2.join(repoRoot, rel), "utf8");
-    const parsed = parseAdrFromPath(rel, content, "accepted", config);
+    const parsed = parseAdrFromPath(rel, content, adrDirectoryKind(rel, config), config);
     if (parsed) adrs.push(parsed);
   }
-  if (config.layout.mode === "split" || config.layout.acceptedDir !== config.layout.proposedDir) {
-    for (const name of await listAdrFiles(proposedDir)) {
-      const rel = path2.join(config.layout.proposedDir, name);
-      const content = await readFile2(path2.join(repoRoot, rel), "utf8");
-      const parsed = parseAdrFromPath(rel, content, "proposed", config);
-      if (parsed) adrs.push(parsed);
+  return adrs.sort((a, b) => a.number - b.number);
+}
+function adrDirectoryKind(relativePath, config) {
+  const directories = [[config.layout.acceptedDir, "accepted"]];
+  if (config.layout.proposedDir !== config.layout.acceptedDir) {
+    directories.push([config.layout.proposedDir, "proposed"]);
+  }
+  directories.sort((a, b) => b[0].length - a[0].length);
+  return directories.find(([dir]) => relativePath.startsWith(`${dir.replace(/\/$/, "")}/`))?.[1] ?? null;
+}
+async function listWorkingAdrPaths(repoRoot, config) {
+  const paths = /* @__PURE__ */ new Set();
+  async function visit2(relativeDir) {
+    const abs = path2.join(repoRoot, relativeDir);
+    if (!existsSync2(abs)) return;
+    for (const entry of await readdir(abs, { withFileTypes: true })) {
+      const rel = path2.posix.join(relativeDir, entry.name);
+      if (entry.isDirectory()) await visit2(rel);
+      else if (entry.isFile() && entry.name.endsWith(".md") && entry.name !== "README.md") paths.add(rel);
     }
   }
-  return adrs.sort((a, b) => a.number - b.number);
+  for (const dir of /* @__PURE__ */ new Set([config.layout.acceptedDir, config.layout.proposedDir])) await visit2(dir);
+  return [...paths].sort((a, b) => Buffer.from(a).compare(Buffer.from(b)));
 }
 function isPathInsideRepo(repoRoot, targetPath) {
   const resolved = path2.resolve(repoRoot, targetPath);
@@ -1095,6 +1171,7 @@ function ciWorkflowSuggestion() {
 name: adr-governance
 on:
   pull_request:
+    types: [opened, edited, synchronize, reopened]
   push:
     branches: [main, develop]
 jobs:
@@ -1108,10 +1185,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: >-
-          node .adr-governance/bin/cli.mjs check
-          --base "\${{ github.event.pull_request.base.sha }}"
-          --github-event "$GITHUB_EVENT_PATH"
+      - run: |
+          verifier=$(mktemp "$RUNNER_TEMP/adr-governance-check.XXXXXX.mjs")
+          trap 'rm -f "$verifier"' EXIT
+          git show "\${{ github.event.pull_request.base.sha }}:.adr-governance/bin/cli.mjs" > "$verifier"
+          node "$verifier" check --repo "$GITHUB_WORKSPACE" --base "\${{ github.event.pull_request.base.sha }}" --github-event "$GITHUB_EVENT_PATH"
   adr-check-push:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
@@ -1178,60 +1256,90 @@ init_numbering();
 // src/installer/apply-plan.ts
 init_numbering();
 import { lstat as lstat2, readFile as readFile5 } from "node:fs/promises";
-import { existsSync as existsSync5 } from "node:fs";
+import { existsSync as existsSync4 } from "node:fs";
 import path6 from "node:path";
 
 // src/core/locks.ts
-import { mkdir as mkdir2, open, readFile as readFile4, readdir as readdir2, rm, lstat, unlink, writeFile } from "node:fs/promises";
-import { existsSync as existsSync4 } from "node:fs";
+import { mkdir as mkdir2, readFile as readFile4, readdir as readdir2, rename as rename2, rm, rmdir, lstat, unlink, writeFile } from "node:fs/promises";
 import path5 from "node:path";
+import { randomUUID } from "node:crypto";
 var LOCK_STALE_MS = 10 * 60 * 1e3;
 async function acquireLock(repoRoot, name, command) {
   const lockDir = path5.join(repoRoot, LOCKS_DIR);
   await mkdir2(lockDir, { recursive: true });
   const lockPath = path5.join(lockDir, `${name}.lock`);
   await cleanupStaleLocks(lockDir);
+  const ownerId = randomUUID();
+  const ownerFile = `owner-${ownerId}.json`;
+  const pendingPath = path5.join(lockDir, `${name}.${ownerId}.pending`);
   try {
-    const handle = await open(lockPath, "wx");
+    await mkdir2(pendingPath);
     const info = {
       pid: process.pid,
       startedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      command
+      command,
+      ownerId
     };
-    await handle.writeFile(JSON.stringify(info, null, 2));
-    await handle.close();
+    await writeFile(path5.join(pendingPath, ownerFile), JSON.stringify(info, null, 2));
+    await rename2(pendingPath, lockPath);
   } catch {
     throw new Error(`Could not acquire lock: ${name}. Another command may be running.`);
+  } finally {
+    await rm(pendingPath, { recursive: true, force: true });
   }
   return async () => {
-    if (existsSync4(lockPath)) {
-      await unlink(lockPath);
-    }
+    await removeLockOwner(lockPath, ownerFile);
   };
 }
+async function removeLockOwner(lockPath, ownerFile) {
+  try {
+    await unlink(path5.join(lockPath, ownerFile));
+  } catch (error) {
+    if (["ENOENT", "ENOTDIR"].includes(error.code ?? "")) return;
+    throw error;
+  }
+  try {
+    await rmdir(lockPath);
+  } catch (error) {
+    if (!["ENOENT", "ENOTEMPTY", "EEXIST", "ENOTDIR"].includes(error.code ?? "")) throw error;
+  }
+}
+async function isAbandonedLock(metadataPath, now) {
+  const infoStat = await lstat(metadataPath);
+  if (!infoStat.isFile() || now - infoStat.mtimeMs <= LOCK_STALE_MS) return false;
+  try {
+    const info = JSON.parse(await readFile4(metadataPath, "utf8"));
+    if (Number.isInteger(info.pid) && info.pid > 0) {
+      try {
+        process.kill(info.pid, 0);
+        return false;
+      } catch (error) {
+        return error.code === "ESRCH";
+      }
+    }
+  } catch {
+  }
+  return true;
+}
 async function cleanupStaleLocks(lockDir) {
-  if (!existsSync4(lockDir)) return;
   const entries = await readdir2(lockDir);
   const now = Date.now();
   for (const entry of entries) {
+    if (!entry.endsWith(".lock")) continue;
     const lockPath = path5.join(lockDir, entry);
     try {
-      const content = await readFile4(lockPath, "utf8");
-      const info = JSON.parse(content);
-      const age = now - new Date(info.startedAt).getTime();
-      const stale = age > LOCK_STALE_MS;
-      let alive = false;
-      try {
-        process.kill(info.pid, 0);
-        alive = true;
-      } catch {
-        alive = false;
-      }
-      if (!alive && stale) {
+      const observed = await lstat(lockPath);
+      if (observed.isDirectory()) {
+        const owners = await readdir2(lockPath);
+        if (owners.length !== 1 || !/^owner-[a-f0-9-]+\.json$/.test(owners[0])) continue;
+        const ownerFile = owners[0];
+        if (await isAbandonedLock(path5.join(lockPath, ownerFile), now)) {
+          await removeLockOwner(lockPath, ownerFile);
+        }
+      } else if (await isAbandonedLock(lockPath, now)) {
         await unlink(lockPath);
       }
     } catch {
-      await unlink(lockPath).catch(() => void 0);
     }
   }
 }
@@ -1240,7 +1348,6 @@ async function atomicWriteFile(targetPath, content) {
   await mkdir2(dir, { recursive: true });
   const tempPath = `${targetPath}.${process.pid}.tmp`;
   await writeFile(tempPath, content, "utf8");
-  const { rename: rename2 } = await import("node:fs/promises");
   await rename2(tempPath, targetPath);
 }
 
@@ -2591,7 +2698,7 @@ async function assertNoSymlinkInPath(repoRoot, relPath) {
   const root = path6.resolve(repoRoot);
   let current = path6.dirname(abs);
   while (current.startsWith(root)) {
-    if (existsSync5(current)) {
+    if (existsSync4(current)) {
       const stat3 = await lstat2(current);
       if (stat3.isSymbolicLink()) {
         throw new Error(`Symlink in path not allowed: ${path6.relative(root, current) || "."}`);
@@ -2604,7 +2711,7 @@ async function assertNoSymlinkInPath(repoRoot, relPath) {
 async function hashFileAt(repoRoot, relPath) {
   await assertNoSymlinkInPath(repoRoot, relPath);
   const abs = path6.join(repoRoot, relPath);
-  if (!existsSync5(abs)) return null;
+  if (!existsSync4(abs)) return null;
   const stat3 = await lstat2(abs);
   if (stat3.isSymbolicLink()) {
     throw new Error(`Symlink paths are not allowed in init plan: ${relPath}`);
@@ -2626,7 +2733,7 @@ async function validatePlanPaths(repoRoot, plan) {
       errors.push(String(e));
     }
     const abs = path6.join(repoRoot, op.path);
-    if (existsSync5(abs)) {
+    if (existsSync4(abs)) {
       const stat3 = await lstat2(abs);
       if (stat3.isSymbolicLink()) {
         errors.push(`Symlink target not allowed: ${op.path}`);
@@ -2657,7 +2764,7 @@ async function applyPlanOperations(repoRoot, operations) {
     if (op.kind === "merge-jsonc") {
       await assertHashIfExpected(repoRoot, op.path, op.expectedCurrentHash);
       const abs = path6.join(repoRoot, op.path);
-      const current = existsSync5(abs) ? await readFile5(abs, "utf8") : "{}";
+      const current = existsSync4(abs) ? await readFile5(abs, "utf8") : "{}";
       const merged = mergeJsoncEdits(current, op.edits);
       await atomicWriteFile(abs, merged);
     }
@@ -2666,7 +2773,7 @@ async function applyPlanOperations(repoRoot, operations) {
 async function assertHashIfExpected(repoRoot, relPath, expected) {
   if (expected === null) return;
   const abs = path6.join(repoRoot, relPath);
-  if (!existsSync5(abs)) {
+  if (!existsSync4(abs)) {
     throw new Error(`Plan hash check failed; file missing: ${relPath}`);
   }
   const actual = await hashFileAt(repoRoot, relPath);
@@ -2679,12 +2786,12 @@ async function assertHashIfExpected(repoRoot, relPath, expected) {
 
 // src/installer/init-plan-builder.ts
 import { readFile as readFile7, readdir as readdir4 } from "node:fs/promises";
-import { existsSync as existsSync8 } from "node:fs";
+import { existsSync as existsSync7 } from "node:fs";
 import path9 from "node:path";
 
 // src/installer/hook-merge.ts
 import { readFile as readFile6 } from "node:fs/promises";
-import { existsSync as existsSync6 } from "node:fs";
+import { existsSync as existsSync5 } from "node:fs";
 import path7 from "node:path";
 init_numbering();
 
@@ -2698,20 +2805,8 @@ function isManagedEntry(entry, marker) {
   const name = String(entry.name ?? "");
   return command.includes(marker) || name.includes("adr-governance");
 }
-function entryKey(entry) {
-  return JSON.stringify(entry);
-}
-function appendUnique(entries, toAdd) {
-  const result = [...entries];
-  const keys = new Set(entries.map((e) => entryKey(e)));
-  for (const item of toAdd) {
-    const key = entryKey(item);
-    if (!keys.has(key)) {
-      result.push(item);
-      keys.add(key);
-    }
-  }
-  return result;
+function replaceManaged(entries, managed, marker) {
+  return entries.flatMap((entry) => isManagedEntry(entry, marker) ? managed.map((replacement) => ({ ...entry, ...replacement })) : [entry]);
 }
 function countManaged(groups, marker) {
   let count = 0;
@@ -2743,7 +2838,7 @@ function mergeNestedHookGroups(current, managedEntries, marker) {
       updated = true;
       return {
         ...group,
-        hooks: appendUnique(group.hooks, managedEntries)
+        hooks: replaceManaged(group.hooks, managedEntries, marker)
       };
     }
     return item;
@@ -2753,7 +2848,7 @@ function mergeNestedHookGroups(current, managedEntries, marker) {
     if (flatManagedIndex >= 0) {
       const flat = result[flatManagedIndex];
       result[flatManagedIndex] = {
-        hooks: appendUnique([flat], managedEntries)
+        hooks: replaceManaged([flat], managedEntries, marker)
       };
       updated = true;
     } else {
@@ -2769,14 +2864,14 @@ var CURSOR_MANAGED = {
   beforeSubmitPrompt: [{ command: "node .cursor/hooks/adr-governance.mjs before-turn" }],
   stop: [{ command: "node .cursor/hooks/adr-governance.mjs after-turn", loop_limit: 1 }]
 };
-function entryKey2(entry) {
+function entryKey(entry) {
   return JSON.stringify(entry);
 }
-function appendUnique2(entries, toAdd) {
+function appendUnique(entries, toAdd) {
   const result = [...entries];
-  const keys = new Set(entries.map((e) => entryKey2(e)));
+  const keys = new Set(entries.map((e) => entryKey(e)));
   for (const item of toAdd) {
-    const key = entryKey2(item);
+    const key = entryKey(item);
     if (!keys.has(key)) {
       result.push(item);
       keys.add(key);
@@ -2795,7 +2890,7 @@ function mergeHookArrays(existing, managed) {
       conflict: `Multiple managed ADR hook entries found (${managedCount})`
     };
   }
-  return { merged: appendUnique2(existing, managed) };
+  return { merged: appendUnique(existing, managed) };
 }
 function previewCursorHooksMerge(raw) {
   const rel = ".cursor/hooks.json";
@@ -2868,7 +2963,7 @@ function codexManagedKeys() {
         type: "command",
         command: `node "$(git rev-parse --show-toplevel)/.codex/hooks/adr-governance.mjs" ${phase}`,
         commandWindows: `powershell.exe -NoProfile -Command "$r=(git rev-parse --show-toplevel); node \\"$r/.codex/hooks/adr-governance.mjs\\" ${phase}"`,
-        timeout: 2
+        timeout: 3
       }
     ]
   });
@@ -2884,7 +2979,7 @@ function geminiManagedKeys() {
         name,
         type: "command",
         command: `node "$GEMINI_PROJECT_DIR/.gemini/hooks/adr-governance.mjs" ${phase}`,
-        timeout: 2e3
+        timeout: 3e3
       }
     ]
   });
@@ -2905,16 +3000,16 @@ function previewGeminiHooksMerge(raw) {
 async function buildHookMergePlanOperations(repoRoot) {
   const previews = [
     previewCursorHooksMerge(
-      existsSync6(path7.join(repoRoot, ".cursor/hooks.json")) ? await readFile6(path7.join(repoRoot, ".cursor/hooks.json"), "utf8") : null
+      existsSync5(path7.join(repoRoot, ".cursor/hooks.json")) ? await readFile6(path7.join(repoRoot, ".cursor/hooks.json"), "utf8") : null
     ),
     previewClaudeHooksMerge(
-      existsSync6(path7.join(repoRoot, ".claude/settings.json")) ? await readFile6(path7.join(repoRoot, ".claude/settings.json"), "utf8") : null
+      existsSync5(path7.join(repoRoot, ".claude/settings.json")) ? await readFile6(path7.join(repoRoot, ".claude/settings.json"), "utf8") : null
     ),
     previewCodexHooksMerge(
-      existsSync6(path7.join(repoRoot, ".codex/hooks.json")) ? await readFile6(path7.join(repoRoot, ".codex/hooks.json"), "utf8") : null
+      existsSync5(path7.join(repoRoot, ".codex/hooks.json")) ? await readFile6(path7.join(repoRoot, ".codex/hooks.json"), "utf8") : null
     ),
     previewGeminiHooksMerge(
-      existsSync6(path7.join(repoRoot, ".gemini/settings.json")) ? await readFile6(path7.join(repoRoot, ".gemini/settings.json"), "utf8") : null
+      existsSync5(path7.join(repoRoot, ".gemini/settings.json")) ? await readFile6(path7.join(repoRoot, ".gemini/settings.json"), "utf8") : null
     )
   ];
   const operations = [];
@@ -2969,7 +3064,7 @@ async function verifyAllRuntimeHookEntries(repoRoot) {
   const issues = [];
   for (const spec of RUNTIME_HOOKS) {
     const abs = path7.join(repoRoot, spec.rel);
-    if (!existsSync6(abs)) {
+    if (!existsSync5(abs)) {
       issues.push(`Missing ${spec.rel} ADR hook registration`);
       continue;
     }
@@ -3005,7 +3100,7 @@ Domain terms and bounded-context language for this repository.
 
 // src/installer/init-evidence-plan.ts
 import { readdir as readdir3 } from "node:fs/promises";
-import { existsSync as existsSync7 } from "node:fs";
+import { existsSync as existsSync6 } from "node:fs";
 import path8 from "node:path";
 var MAX_PROPOSED_CANDIDATES = 3;
 function shouldProposeContextMap(evidence) {
@@ -3053,7 +3148,7 @@ async function nextAdrNumber2(repoRoot, dirs, idDigits) {
   let max = 0;
   for (const dir of dirs) {
     const abs = path8.join(repoRoot, dir);
-    if (!existsSync7(abs)) continue;
+    if (!existsSync6(abs)) continue;
     for (const file of await readdir3(abs)) {
       const match = /^(\d+)-/.exec(file);
       if (match) {
@@ -3103,7 +3198,7 @@ async function buildProposedAdrCandidateOperations(repoRoot, evidence, config) {
       `${String(nextNumber).padStart(idDigits, "0")}-observed-${slug}.md`
     );
     nextNumber += 1;
-    if (existsSync7(path8.join(repoRoot, relPath))) continue;
+    if (existsSync6(path8.join(repoRoot, relPath))) continue;
     const date = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
     const content = `---
 status: proposed
@@ -3185,7 +3280,7 @@ async function planLayoutReadmeOperations(packageRoot, repoRoot, config) {
   const acceptedReadme = path9.join(acceptedDir, "README.md");
   const proposedReadme = path9.join(proposedDir, "README.md");
   if (mode === "single") {
-    if (!existsSync8(path9.join(repoRoot, acceptedReadme))) {
+    if (!existsSync7(path9.join(repoRoot, acceptedReadme))) {
       results.push({
         operation: {
           kind: "create",
@@ -3201,7 +3296,7 @@ async function planLayoutReadmeOperations(packageRoot, repoRoot, config) {
     return results;
   }
   const templatePath = path9.join(packageRoot, "templates/docs/adr/README.md");
-  if (existsSync8(templatePath) && !existsSync8(path9.join(repoRoot, acceptedReadme))) {
+  if (existsSync7(templatePath) && !existsSync7(path9.join(repoRoot, acceptedReadme))) {
     const raw = await readFile7(templatePath, "utf8");
     results.push({
       operation: {
@@ -3215,7 +3310,7 @@ async function planLayoutReadmeOperations(packageRoot, repoRoot, config) {
       }
     });
   }
-  if (proposedDir !== acceptedDir && !existsSync8(path9.join(repoRoot, proposedReadme))) {
+  if (proposedDir !== acceptedDir && !existsSync7(path9.join(repoRoot, proposedReadme))) {
     results.push({
       operation: {
         kind: "create",
@@ -3257,7 +3352,7 @@ async function walkFiles(dir) {
 }
 async function collectDirOperations(packageRoot, repoRoot, srcRel, destRel) {
   const srcAbs = path9.join(packageRoot, srcRel);
-  if (!existsSync8(srcAbs)) return [];
+  if (!existsSync7(srcAbs)) return [];
   const ops = [];
   for (const entryPath of await walkFiles(srcAbs)) {
     const relFromSrc = path9.relative(srcAbs, entryPath);
@@ -3309,7 +3404,7 @@ async function buildInitPlanOperations(packageRoot, repoRoot, proposedConfig, ci
   }
   for (const [src, dest] of STATIC_TEMPLATES) {
     const srcPath = path9.join(packageRoot, src);
-    if (!existsSync8(srcPath)) continue;
+    if (!existsSync7(srcPath)) continue;
     const content = await readFile7(srcPath, "utf8");
     pushOp(await planFileFromContent(repoRoot, dest, content), {
       sourcePaths: [src],
@@ -3318,7 +3413,7 @@ async function buildInitPlanOperations(packageRoot, repoRoot, proposedConfig, ci
   }
   for (const [src, dest] of BUNDLE_TARGETS) {
     const srcPath = path9.join(packageRoot, src);
-    if (!existsSync8(srcPath)) continue;
+    if (!existsSync7(srcPath)) continue;
     const content = await readFile7(srcPath, "utf8");
     pushOp(await planFileFromContent(repoRoot, dest, content), {
       sourcePaths: [src],
@@ -3326,7 +3421,7 @@ async function buildInitPlanOperations(packageRoot, repoRoot, proposedConfig, ci
     });
   }
   const { contextFile, contextMapFile } = proposedConfig.layout;
-  if (!existsSync8(path9.join(repoRoot, contextFile))) {
+  if (!existsSync7(path9.join(repoRoot, contextFile))) {
     const contextContent = evidence ? buildEvidenceInformedContext(evidence, proposedConfig.documents.language) : contextTemplate(proposedConfig.documents.language);
     pushOp(
       {
@@ -3346,7 +3441,7 @@ async function buildInitPlanOperations(packageRoot, repoRoot, proposedConfig, ci
   for (const entry of await planLayoutReadmeOperations(packageRoot, repoRoot, proposedConfig)) {
     pushOp(entry.operation, entry.provenance);
   }
-  if (evidence && shouldProposeContextMap(evidence) && !existsSync8(path9.join(repoRoot, contextMapFile))) {
+  if (evidence && shouldProposeContextMap(evidence) && !existsSync7(path9.join(repoRoot, contextMapFile))) {
     const mapEntries = evidence.existingLayout.contextFiles.filter((file) => file.endsWith("/CONTEXT.md") || file === "CONTEXT.md").map((file) => `- \`${file}\``).join("\n");
     pushOp(
       {
@@ -3374,7 +3469,7 @@ ${mapEntries}
   }
   if (ciProvider === "github-actions") {
     const workflowPath = ".github/workflows/adr-governance.yml";
-    if (!existsSync8(path9.join(repoRoot, workflowPath))) {
+    if (!existsSync7(path9.join(repoRoot, workflowPath))) {
       pushOp(
         {
           kind: "create",
@@ -3442,7 +3537,7 @@ async function runInitScan(repoRoot, outDir, packageRoot) {
   await writeFile2(evidencePath, JSON.stringify(evidence, null, 2));
   const plan = {
     schemaVersion: 1,
-    planId: randomUUID(),
+    planId: randomUUID2(),
     repositoryRootHash: sha256(repoRoot),
     sourceHeadSha: headSha,
     createdAt: (/* @__PURE__ */ new Date()).toISOString(),
@@ -3490,9 +3585,9 @@ function defaultInitOutputDir(repoRoot) {
 }
 
 // src/cli/commands/check.ts
-import { readFile as readFile11 } from "node:fs/promises";
+import { readFile as readFile12 } from "node:fs/promises";
 import { existsSync as existsSync10 } from "node:fs";
-import path15 from "node:path";
+import path16 from "node:path";
 
 // src/core/adr-transitions.ts
 var ALLOWED_TRANSITIONS = {
@@ -3505,7 +3600,7 @@ var ALLOWED_TRANSITIONS = {
 function byId(adrs) {
   return new Map(adrs.map((a) => [a.id, a]));
 }
-function validateAuthorityMetadata(adr, isNewOrChanged) {
+function validateAuthorityMetadata(adr, isNewOrChanged, requireHumanAcceptance = false) {
   const issues = [];
   const { status, acceptance } = adr.frontmatter;
   if (status === "proposed" && acceptance) {
@@ -3524,16 +3619,19 @@ function validateAuthorityMetadata(adr, isNewOrChanged) {
       path: adr.path
     });
   }
+  if (isNewOrChanged && status === "accepted" && acceptance && requireHumanAcceptance && acceptance !== "human") {
+    issues.push({ severity: "error", code: "human-acceptance-required", message: "Trusted policy requires acceptance: human for new or changed accepted ADRs", path: adr.path });
+  }
   return issues;
 }
-function validateAdrTransitions(base, head) {
+function validateAdrTransitions(base, head, requireHumanAcceptance = false) {
   const baseById = byId(base);
   const issues = [];
   for (const headAdr of head) {
     const baseAdr = baseById.get(headAdr.id);
     const contentChanged = baseAdr !== void 0 && (baseAdr.body !== headAdr.body || JSON.stringify(baseAdr.frontmatter) !== JSON.stringify(headAdr.frontmatter));
     const isNewOrChanged = !baseAdr || baseAdr.frontmatter.status !== headAdr.frontmatter.status || contentChanged;
-    issues.push(...validateAuthorityMetadata(headAdr, isNewOrChanged));
+    issues.push(...validateAuthorityMetadata(headAdr, isNewOrChanged, requireHumanAcceptance));
     if (!baseAdr) continue;
     const from = baseAdr.frontmatter.status;
     const to = headAdr.frontmatter.status;
@@ -3662,6 +3760,9 @@ function isExempt(relativePath, exemptPaths) {
   }
   return false;
 }
+function nonGovernancePaths(changedPaths, governancePaths, config) {
+  return changedPaths.filter((p) => !isGovernancePath(p, governancePaths) && !isExempt(p, config.changeGate.exemptPaths));
+}
 function severityFor(config, code) {
   if (code === "decision-evidence-legacy") return "warning";
   if (config.changeGate.mode === "warn" && CHANGE_GATE_CODES.has(code)) {
@@ -3675,9 +3776,7 @@ function issue(config, code, message, path28) {
 function evaluateChangeGate(input) {
   const { config } = input;
   if (config.changeGate.mode === "off") return [];
-  const nonGovernanceChanges = input.changedPaths.filter(
-    (p) => !isGovernancePath(p, input.governancePaths) && !isExempt(p, config.changeGate.exemptPaths)
-  );
+  const nonGovernanceChanges = nonGovernancePaths(input.changedPaths, input.governancePaths, config);
   if (nonGovernanceChanges.length === 0) return [];
   if (!input.evidence) {
     return [
@@ -3799,10 +3898,10 @@ async function listRefCorpusPaths(repoRoot, ref, config) {
   const { execFile: execFile3 } = await import("node:child_process");
   const { promisify: promisify3 } = await import("node:util");
   const exec = promisify3(execFile3);
-  const { stdout } = await exec("git", ["ls-tree", "-r", "--name-only", ref], { cwd: repoRoot });
+  const { stdout } = await exec("git", ["ls-tree", "-r", "--name-only", "-z", ref], { cwd: repoRoot, maxBuffer: 10 * 1024 * 1024 });
   const prefixes = corpusPathCandidates(config);
   const paths = [];
-  for (const file of stdout.split("\n").filter(Boolean)) {
+  for (const file of stdout.split("\0").filter(Boolean)) {
     const normalized = normalizeRepoPath2(file);
     if (prefixes.includes(normalized)) {
       paths.push(normalized);
@@ -3848,7 +3947,7 @@ async function buildRefDecisionCorpus(repoRoot, ref, config) {
   }
 }
 function hashDecisionCorpus(entries) {
-  const sorted = [...entries].sort((a, b) => a.path.localeCompare(b.path));
+  const sorted = [...entries].sort((a, b) => Buffer.from(a.path).compare(Buffer.from(b.path)));
   const payload = sorted.map((e) => `${e.path}\0${e.contentHash}
 `).join("");
   return `sha256:${sha256(payload)}`;
@@ -3858,7 +3957,7 @@ function hashDecisionCorpus(entries) {
 init_git_diff();
 init_numbering();
 import { createHash as createHash2 } from "node:crypto";
-import { lstat as lstat4, readFile as readFile9, readlink } from "node:fs/promises";
+import { lstat as lstat3, readFile as readFile9, readlink } from "node:fs/promises";
 import path13 from "node:path";
 function sideParts(side) {
   return side ? [side.mode, side.contentHash] : ["-", "-"];
@@ -3887,10 +3986,12 @@ function hashChangeSetEntries(entries) {
   return `sha256:${sha256(parts.join(""))}`;
 }
 async function readCurrentSide(repoRoot, relativePath) {
+  const indexMode = await readIndexMode(repoRoot, relativePath);
+  if (indexMode === "160000") throw new Error(`unsupported gitlink snapshot: ${relativePath}`);
   const abs = path13.join(repoRoot, relativePath);
   let info;
   try {
-    info = await lstat4(abs);
+    info = await lstat3(abs);
   } catch {
     return null;
   }
@@ -3901,12 +4002,17 @@ async function readCurrentSide(repoRoot, relativePath) {
   if (!info.isFile()) {
     return null;
   }
-  const mode = (info.mode & 73) !== 0 ? "100755" : "100644";
-  const content = await readFile9(abs);
+  if (indexMode === "120000" && !await readGitBoolean(repoRoot, "core.symlinks", true)) {
+    return { mode: "120000", contentHash: hashContent(await readFile9(abs)) };
+  }
+  const trustFileMode = await readGitBoolean(repoRoot, "core.filemode", true);
+  const mode = trustFileMode ? (info.mode & 64) !== 0 ? "100755" : "100644" : indexMode === "100755" ? "100755" : "100644";
+  const content = await readCleanWorktreeBlob(repoRoot, relativePath);
   return { mode, contentHash: hashContent(content) };
 }
 async function readBaseSide(repoRoot, comparisonBase, relativePath) {
   const mode = await readModeAtRef(repoRoot, comparisonBase, relativePath);
+  if (mode === "160000") throw new Error(`unsupported gitlink snapshot: ${relativePath}`);
   if (!mode) return null;
   const blob = await readBlobAtRef(repoRoot, comparisonBase, relativePath);
   if (blob === null) return null;
@@ -3940,7 +4046,7 @@ init_numbering();
 
 // src/core/context-links.ts
 import { readFile as readFile10 } from "node:fs/promises";
-import { existsSync as existsSync9 } from "node:fs";
+import { existsSync as existsSync8 } from "node:fs";
 import path14 from "node:path";
 var MARKDOWN_LINK_RE = /\[[^\]]+\]\(([^)]+)\)/g;
 function extractRelativeLinks(content) {
@@ -3958,13 +4064,13 @@ async function validateContextLinks(repoRoot, contextPaths) {
   const issues = [];
   for (const rel of contextPaths) {
     const abs = path14.join(repoRoot, rel);
-    if (!existsSync9(abs)) continue;
+    if (!existsSync8(abs)) continue;
     const content = await readFile10(abs, "utf8");
     const baseDir = path14.dirname(rel);
     for (const link of extractRelativeLinks(content)) {
       const resolved = path14.normalize(path14.join(baseDir, link));
       const absTarget = path14.join(repoRoot, resolved);
-      if (!existsSync9(absTarget)) {
+      if (!existsSync8(absTarget)) {
         issues.push({
           path: rel,
           message: `Broken relative link: ${link}`
@@ -3978,6 +4084,97 @@ async function validateContextLinks(repoRoot, contextPaths) {
 // src/cli/commands/check.ts
 init_git_diff();
 init_github_evidence();
+
+// src/core/base-policy.ts
+init_git_diff();
+async function readBasePolicy(repoRoot, baseRef) {
+  const raw = await readFileAtRef(repoRoot, baseRef, "adr.config.json");
+  if (raw === null) throw new Error(`No readable adr.config.json at base ${baseRef}`);
+  return parseConfig(JSON.parse(raw)).config;
+}
+
+// src/installer/generated-files.ts
+import { readFile as readFile11, readdir as readdir5, stat as stat2 } from "node:fs/promises";
+import { existsSync as existsSync9 } from "node:fs";
+import path15 from "node:path";
+init_numbering();
+var GENERATOR_VERSION = "0.2.0";
+var USER_MANAGED_FILES = /* @__PURE__ */ new Set([
+  "adr.config.json",
+  ".cursor/hooks.json",
+  ".claude/settings.json",
+  ".codex/hooks.json",
+  ".gemini/settings.json"
+]);
+function isUserManagedFile(relativePath) {
+  return USER_MANAGED_FILES.has(relativePath);
+}
+async function hashFile(absPath) {
+  const content = await readFile11(absPath, "utf8");
+  return sha256(content);
+}
+async function buildManifest(repoRoot, packageRoot) {
+  const files = {};
+  const targets = [
+    ".agents/skills/managing-adrs",
+    ".adr-governance/bin",
+    ".adr-governance/schema",
+    ".adr-governance/.gitignore",
+    ".cursor/rules/adr-governance.mdc",
+    ".cursor/hooks/adr-governance.mjs",
+    ".cursor/hooks.json",
+    ".claude/commands/adr.md",
+    ".claude/hooks/adr-governance.mjs",
+    ".claude/settings.json",
+    ".codex/hooks/adr-governance.mjs",
+    ".codex/hooks.json",
+    ".gemini/hooks/adr-governance.mjs",
+    ".gemini/settings.json",
+    "adr.config.json"
+  ];
+  for (const rel of targets) {
+    if (isUserManagedFile(rel)) continue;
+    const abs = path15.join(repoRoot, rel);
+    if (!existsSync9(abs)) continue;
+    const s = await stat2(abs);
+    if (s.isDirectory()) {
+      const entries = await readdir5(abs, { recursive: true });
+      for (const entry of entries) {
+        const entryPath = path15.join(abs, String(entry));
+        const st = await stat2(entryPath);
+        if (st.isFile()) {
+          const r = path15.relative(repoRoot, entryPath);
+          files[r] = await hashFile(entryPath);
+        }
+      }
+    } else {
+      files[rel] = await hashFile(abs);
+    }
+  }
+  void packageRoot;
+  return {
+    version: GENERATOR_VERSION,
+    generatorVersion: GENERATOR_VERSION,
+    files
+  };
+}
+async function copySkillAndBundles(packageRoot, repoRoot, plan) {
+  const filteredOperations = plan.operations.filter((op) => {
+    if (op.kind !== "create") return true;
+    return !existsSync9(path15.join(repoRoot, op.path));
+  });
+  await applyPlanOperations(repoRoot, filteredOperations);
+  const postApplySteps = plan.postApplySteps ?? ["write-manifest"];
+  if (postApplySteps.includes("write-manifest")) {
+    const manifest = await buildManifest(repoRoot, packageRoot);
+    await atomicWriteFile(
+      path15.join(repoRoot, ".adr-governance/manifest.json"),
+      JSON.stringify(manifest, null, 2) + "\n"
+    );
+  }
+}
+
+// src/cli/commands/check.ts
 async function runCheck(repoRoot, options) {
   const resolved = typeof options === "string" ? { baseRef: options } : options ?? {};
   if (resolved.evidencePath && resolved.githubEventPath) {
@@ -3993,7 +4190,7 @@ async function runCheck(repoRoot, options) {
       ]
     };
   }
-  const configPath = path15.join(repoRoot, "adr.config.json");
+  const configPath = path16.join(repoRoot, "adr.config.json");
   if (!existsSync10(configPath)) {
     return {
       ok: false,
@@ -4004,7 +4201,7 @@ async function runCheck(repoRoot, options) {
   let config;
   let configWarnings = [];
   try {
-    const parsed = parseConfig(JSON.parse(await readFile11(configPath, "utf8")));
+    const parsed = parseConfig(JSON.parse(await readFile12(configPath, "utf8")));
     config = parsed.config;
     configWarnings = parsed.warnings;
   } catch (e) {
@@ -4031,12 +4228,13 @@ async function runCheck(repoRoot, options) {
       });
     }
   }
-  const manifestPath = path15.join(repoRoot, MANIFEST_PATH);
+  const manifestPath = path16.join(repoRoot, MANIFEST_PATH);
   if (existsSync10(manifestPath)) {
     try {
-      const manifest = JSON.parse(await readFile11(manifestPath, "utf8"));
+      const manifest = JSON.parse(await readFile12(manifestPath, "utf8"));
       for (const [rel, expectedHash] of Object.entries(manifest.files ?? {})) {
-        const abs = path15.join(repoRoot, rel);
+        if (isUserManagedFile(rel)) continue;
+        const abs = path16.join(repoRoot, rel);
         if (!existsSync10(abs)) {
           issues.push({
             severity: "error",
@@ -4046,7 +4244,7 @@ async function runCheck(repoRoot, options) {
           });
           continue;
         }
-        const actual = sha256(await readFile11(abs, "utf8"));
+        const actual = sha256(await readFile12(abs, "utf8"));
         if (actual !== expectedHash) {
           issues.push({
             severity: "error",
@@ -4065,9 +4263,7 @@ async function runCheck(repoRoot, options) {
     }
   }
   if (resolved.baseRef) {
-    const baseIssues = await checkBaseRefDuplicates(repoRoot, resolved.baseRef, adrs, config);
-    issues.push(...baseIssues);
-    const gateIssues = await checkDecisionAuthority(repoRoot, config, adrs, resolved);
+    const gateIssues = await checkDecisionAuthority(repoRoot, resolved);
     issues.push(...gateIssues);
   }
   for (const message of await verifyAllRuntimeHookEntries(repoRoot)) {
@@ -4089,253 +4285,130 @@ async function runCheck(repoRoot, options) {
 async function listContextFiles(repoRoot, candidates) {
   const paths = [];
   for (const candidate of candidates) {
-    if (existsSync10(path15.join(repoRoot, candidate))) paths.push(candidate);
+    if (existsSync10(path16.join(repoRoot, candidate))) paths.push(candidate);
   }
   return [...new Set(paths)];
 }
-async function checkDecisionAuthority(repoRoot, config, headAdrs, options) {
-  if (!options.baseRef || config.changeGate.mode === "off") return [];
-  const issues = [];
-  const baseRef = options.baseRef;
-  if (!await refExists(repoRoot, baseRef)) {
-    if (config.changeGate.mode === "enforce") {
-      issues.push({
-        severity: "error",
-        code: "base-ref-unavailable",
-        message: `Could not read base ref ${baseRef}`
-      });
-    }
-    return issues;
+async function checkDecisionAuthority(repoRoot, options) {
+  if (!options.baseRef) return [];
+  if (!await refExists(repoRoot, options.baseRef)) {
+    return [{
+      severity: "error",
+      code: "base-ref-unavailable",
+      message: `Could not read base ref ${options.baseRef}`
+    }];
   }
-  const baseAdrs = await loadAdrsAtRef(repoRoot, baseRef, config);
-  issues.push(...validateAdrTransitions(baseAdrs, headAdrs));
-  let evidence = null;
-  if (options.evidencePath) {
-    try {
-      evidence = parseDecisionEvidence(JSON.parse(await readFile11(options.evidencePath, "utf8")));
-    } catch (e) {
-      issues.push({
-        severity: config.changeGate.mode === "warn" ? "warning" : "error",
-        code: "decision-evidence-invalid",
-        message: `Could not load evidence: ${String(e)}`
-      });
-    }
-  } else if (options.githubEventPath) {
-    try {
-      const event = JSON.parse(await readFile11(options.githubEventPath, "utf8"));
-      evidence = parseGitHubEventEvidence(event);
-      if (!evidence) {
-        issues.push({
-          severity: config.changeGate.mode === "warn" ? "warning" : "error",
-          code: "decision-evidence-required",
-          message: "PR body does not contain a valid adr-governance evidence block"
-        });
-      }
-    } catch (e) {
-      issues.push({
-        severity: config.changeGate.mode === "warn" ? "warning" : "error",
-        code: "decision-evidence-invalid",
-        message: `Could not parse GitHub event: ${String(e)}`
-      });
-    }
-  }
-  let corpus;
+  let config;
+  let baseRef;
   try {
-    corpus = await buildRefDecisionCorpus(repoRoot, baseRef, config);
+    baseRef = await resolveCommit(repoRoot, options.baseRef);
+    config = await readBasePolicy(repoRoot, baseRef);
   } catch (error) {
-    if (!(error instanceof BaseRefUnavailableError)) throw error;
-    issues.push({
-      severity: "error",
-      code: "base-ref-unavailable",
-      message: `Could not read decision corpus at base ref ${baseRef}`
-    });
-    return issues;
+    return [{ severity: "error", code: "base-policy-unavailable", message: `Cannot evaluate trusted base policy: ${String(error)}` }];
   }
-  const expectedHash = hashDecisionCorpus(corpus);
-  let changedPaths;
+  const severity = config.changeGate.mode === "enforce" ? "error" : "warning";
+  const issues = [];
   try {
-    changedPaths = await listChangedPaths(repoRoot, baseRef);
-  } catch {
-    issues.push({
-      severity: "error",
-      code: "base-ref-unavailable",
-      message: `Could not compare changes against base ref ${baseRef}`
-    });
-    return issues;
-  }
-  const govPaths = await governanceArtifactPaths(repoRoot, baseRef, config, headAdrs, baseAdrs);
-  const normalizedChanged = new Set(changedPaths.map((p) => p.replace(/\\/g, "/")));
-  const changedProposed = headAdrs.filter((adr) => {
-    if (adr.frontmatter.status !== "proposed") return false;
-    const normalizedPath = adr.path.replace(/\\/g, "/");
-    return normalizedChanged.has(normalizedPath);
-  });
-  const adrContentHashes = /* @__PURE__ */ new Map();
-  for (const adr of headAdrs) {
-    if (adr.frontmatter.status !== "accepted") continue;
-    const abs = path15.join(repoRoot, adr.path);
-    if (!existsSync10(abs)) continue;
-    const content = await readFile11(abs, "utf8");
-    adrContentHashes.set(adr.id, contentHashForFile(content));
-  }
-  let resolvedBaseCommit;
-  try {
-    resolvedBaseCommit = await resolveCommit(repoRoot, baseRef);
-  } catch {
-    issues.push({
-      severity: "error",
-      code: "base-ref-unavailable",
-      message: `Could not read base ref ${baseRef}`
-    });
-    return issues;
-  }
-  let currentChangeSetDigest;
-  try {
+    const baseAdrs = await loadAdrsAtRef(repoRoot, baseRef, config);
+    const headAdrs = await loadAllAdrs(repoRoot, config);
+    issues.push(...checkBaseRefDuplicates(baseAdrs, headAdrs, baseRef));
+    if (config.changeGate.mode === "off") return issues;
+    issues.push(...validateAdrTransitions(baseAdrs, headAdrs, config.promotion.requireHumanAcceptance));
     const changeSet = await buildChangeSet(repoRoot, baseRef);
-    currentChangeSetDigest = changeSet.digest;
-  } catch {
-    issues.push({
-      severity: "error",
-      code: "base-ref-unavailable",
-      message: `Could not build change set against base ref ${baseRef}`
-    });
-    return issues;
-  }
-  issues.push(
-    ...evaluateChangeGate({
+    const changedPaths = changeSet.entries.map((entry) => entry.path);
+    const govPaths = await governanceArtifactPaths(repoRoot, baseRef, config, headAdrs, baseAdrs);
+    if (nonGovernancePaths(changedPaths, govPaths, config).length === 0) return issues;
+    let evidence = null;
+    try {
+      if (options.evidencePath) {
+        evidence = parseDecisionEvidence(JSON.parse(await readFile12(options.evidencePath, "utf8")));
+      } else if (options.githubEventPath) {
+        evidence = parseGitHubEventEvidence(JSON.parse(await readFile12(options.githubEventPath, "utf8")));
+      }
+    } catch (error) {
+      issues.push({ severity, code: "decision-evidence-invalid", message: `Could not load decision evidence: ${String(error)}` });
+      return issues;
+    }
+    const corpus = await buildRefDecisionCorpus(repoRoot, baseRef, config);
+    const changed = new Set(changedPaths);
+    const changedProposed = headAdrs.filter((adr) => adr.frontmatter.status === "proposed" && changed.has(adr.path));
+    const adrContentHashes = /* @__PURE__ */ new Map();
+    for (const adr of headAdrs) {
+      if (adr.frontmatter.status !== "accepted") continue;
+      adrContentHashes.set(adr.id, contentHashForFile(await readFile12(path16.join(repoRoot, adr.path), "utf8")));
+    }
+    issues.push(...evaluateChangeGate({
       config,
       changedPaths,
       governancePaths: govPaths,
       changedProposedAdrs: changedProposed,
       adrContentHashes,
-      expectedDecisionCorpusHash: expectedHash,
-      resolvedBaseCommit,
-      currentChangeSetDigest,
+      expectedDecisionCorpusHash: hashDecisionCorpus(corpus),
+      resolvedBaseCommit: baseRef,
+      currentChangeSetDigest: changeSet.digest,
       evidence
-    })
-  );
+    }));
+  } catch (error) {
+    issues.push({ severity, code: "base-ref-unavailable", message: `Could not validate comparison with base ${baseRef}: ${String(error)}` });
+  }
   return issues;
 }
 async function governanceArtifactPaths(repoRoot, baseRef, config, headAdrs, baseAdrs) {
-  const paths = /* @__PURE__ */ new Set([
-    MANIFEST_PATH,
-    config.layout.contextFile,
-    config.layout.contextMapFile
-  ]);
-  for (const adr of [...headAdrs, ...baseAdrs]) {
-    paths.add(adr.path.replace(/\\/g, "/"));
-  }
-  const addManifestFiles = (raw) => {
-    if (!raw) return;
-    try {
-      const manifest = JSON.parse(raw);
-      for (const rel of Object.keys(manifest.files ?? {})) paths.add(rel.replace(/\\/g, "/"));
-    } catch {
+  const paths = /* @__PURE__ */ new Set([MANIFEST_PATH, config.layout.contextFile, config.layout.contextMapFile]);
+  for (const adr of [...headAdrs, ...baseAdrs]) paths.add(adr.path);
+  const raw = await readFileAtRef(repoRoot, baseRef, MANIFEST_PATH);
+  if (raw !== null) {
+    const manifest = JSON.parse(raw);
+    for (const rel of Object.keys(manifest.files ?? {})) {
+      if (isUserManagedFile(rel) || rel.startsWith(".adr-governance/bin/") || /^\.(cursor|claude|codex|gemini)\/hooks\//.test(rel)) continue;
+      paths.add(rel);
     }
-  };
-  try {
-    addManifestFiles(await readFile11(path15.join(repoRoot, MANIFEST_PATH), "utf8"));
-  } catch {
   }
-  addManifestFiles(await readFileAtRef(repoRoot, baseRef, MANIFEST_PATH));
   return [...paths];
 }
 async function loadAdrsAtRef(repoRoot, ref, config) {
   const { parseAdrFromPath: parseAdrFromPath2 } = await Promise.resolve().then(() => (init_validation(), validation_exports));
   const { execFile: execFile3 } = await import("node:child_process");
   const { promisify: promisify3 } = await import("node:util");
-  const exec = promisify3(execFile3);
+  const { stdout } = await promisify3(execFile3)("git", ["ls-tree", "-r", "--name-only", "-z", ref], { cwd: repoRoot, maxBuffer: 10 * 1024 * 1024 });
   const adrs = [];
-  try {
-    const { stdout } = await exec("git", ["ls-tree", "-r", "--name-only", ref], {
-      cwd: repoRoot
-    });
-    for (const file of stdout.split("\n").filter(Boolean)) {
-      if (!file.endsWith(".md") || file.endsWith("/README.md")) continue;
-      let kind = null;
-      if (file.startsWith(`${config.layout.acceptedDir}/`)) kind = "accepted";
-      else if ((config.layout.mode === "split" || config.layout.acceptedDir !== config.layout.proposedDir) && file.startsWith(`${config.layout.proposedDir}/`)) {
-        kind = "proposed";
-      }
-      if (!kind) continue;
-      const content = await readFileAtRef(repoRoot, ref, file);
-      if (!content) continue;
-      const parsed = parseAdrFromPath2(file, content, kind, config);
-      if (parsed) adrs.push(parsed);
-    }
-  } catch {
-    return [];
+  for (const file of stdout.split("\0").filter(Boolean)) {
+    if (!file.endsWith(".md") || file.endsWith("/README.md")) continue;
+    const kind = adrDirectoryKind(file, config);
+    if (!kind) continue;
+    const content = await readFileAtRef(repoRoot, ref, file);
+    if (content === null) throw new BaseRefUnavailableError(ref);
+    const parsed = parseAdrFromPath2(file, content, kind, config);
+    if (parsed) adrs.push(parsed);
   }
   return adrs.sort((a, b) => a.number - b.number);
 }
-async function checkBaseRefDuplicates(repoRoot, baseRef, currentAdrs, config) {
-  const { execFile: execFile3 } = await import("node:child_process");
-  const { promisify: promisify3 } = await import("node:util");
-  const exec = promisify3(execFile3);
+function checkBaseRefDuplicates(baseAdrs, currentAdrs, baseRef) {
   const issues = [];
-  const byNumber = /* @__PURE__ */ new Map();
+  const baseByNumber = /* @__PURE__ */ new Map();
+  for (const adr of baseAdrs) {
+    const slugs = baseByNumber.get(adr.number) ?? /* @__PURE__ */ new Set();
+    slugs.add(adr.slug);
+    baseByNumber.set(adr.number, slugs);
+  }
+  const currentByNumber = /* @__PURE__ */ new Map();
   for (const adr of currentAdrs) {
-    const group = byNumber.get(adr.number) ?? [];
-    group.push(adr);
-    byNumber.set(adr.number, group);
+    const slugs = currentByNumber.get(adr.number) ?? /* @__PURE__ */ new Set();
+    slugs.add(adr.slug);
+    currentByNumber.set(adr.number, slugs);
   }
-  for (const [number, group] of byNumber) {
-    if (group.length > 1) {
-      issues.push({
-        severity: "error",
-        code: "duplicate-number",
-        message: `Duplicate ADR number ${number} in current tree: ${group.map((a) => a.path).join(", ")}`
-      });
-    }
-  }
-  try {
-    const { stdout } = await exec("git", ["ls-tree", "-r", "--name-only", baseRef], {
-      cwd: repoRoot
-    });
-    const baseByNumber = /* @__PURE__ */ new Map();
-    for (const file of stdout.split("\n").filter((f) => /\d{4}-.+\.md$/.test(f))) {
-      const match = /(\d{4})-/.exec(file);
-      if (!match) continue;
-      const num = Number.parseInt(match[1] ?? "0", 10);
-      const list = baseByNumber.get(num) ?? [];
-      list.push(file);
-      baseByNumber.set(num, list);
-    }
-    for (const [num, baseFiles] of baseByNumber) {
-      const current = byNumber.get(num) ?? [];
-      if (current.length === 0) continue;
-      const baseNames = new Set(baseFiles.map((f) => f.split("/").pop()));
-      const currentNames = new Set(current.map((a) => a.path.split("/").pop()));
-      const overlap = [...baseNames].some((n) => currentNames.has(n));
-      if (!overlap && current.length > 0) {
-        issues.push({
-          severity: "error",
-          code: "base-ref-number-collision",
-          message: `ADR number ${num} reused with different slug between ${baseRef} and current branch`
-        });
-      }
-    }
-  } catch {
-    if (config.changeGate.mode === "enforce") {
-      issues.push({
-        severity: "error",
-        code: "base-ref-unavailable",
-        message: `Could not compare against ${baseRef}`
-      });
-    } else {
-      issues.push({
-        severity: "warning",
-        code: "base-ref-unavailable",
-        message: `Could not compare against ${baseRef}`
-      });
+  for (const [number, slugs] of currentByNumber) {
+    const baseSlugs = baseByNumber.get(number);
+    if (baseSlugs && ![...slugs].some((slug) => baseSlugs.has(slug))) {
+      issues.push({ severity: "error", code: "base-ref-number-collision", message: `ADR number ${number} reused with different slug between ${baseRef} and current branch` });
     }
   }
   return issues;
 }
 
 // src/cli/commands/attest.ts
-import { readFile as readFile12 } from "node:fs/promises";
-import path16 from "node:path";
+import { readFile as readFile13 } from "node:fs/promises";
+import path17 from "node:path";
 init_decision_evidence();
 init_git_diff();
 async function runAttest(options) {
@@ -4347,11 +4420,12 @@ async function runAttest(options) {
   if (!await refExists(options.repoRoot, options.baseRef)) {
     throw new BaseRefUnavailableError(options.baseRef);
   }
-  const corpus = await buildRefDecisionCorpus(options.repoRoot, options.baseRef, options.config);
+  const policy = await readBasePolicy(options.repoRoot, options.baseRef);
+  const corpus = await buildRefDecisionCorpus(options.repoRoot, options.baseRef, policy);
   const decisionCorpusHash = hashDecisionCorpus(corpus);
   const changeSet = await buildChangeSet(options.repoRoot, options.baseRef);
   const baseCommit = changeSet.baseCommit;
-  const adrs = await loadAllAdrs(options.repoRoot, options.config);
+  const adrs = await loadAllAdrs(options.repoRoot, policy);
   const adrById = new Map(adrs.map((a) => [a.id, a]));
   if (hasAdr) {
     const refs = [];
@@ -4360,7 +4434,7 @@ async function runAttest(options) {
       if (!adr || adr.frontmatter.status !== "accepted") {
         throw new Error(`ADR is not accepted: ${id}`);
       }
-      const content = await readFile12(path16.join(options.repoRoot, adr.path), "utf8");
+      const content = await readFile13(path17.join(options.repoRoot, adr.path), "utf8");
       refs.push({ id, contentHash: contentHashForFile(content) });
     }
     const evidence2 = {
@@ -4406,12 +4480,12 @@ async function runAttest(options) {
 // src/cli/commands/create.ts
 init_numbering();
 init_lifecycle();
-import path17 from "node:path";
+import path18 from "node:path";
 async function runCreate(options) {
   const release = await acquireLock(options.repoRoot, "create", "create");
   try {
-    const acceptedDir = path17.join(options.repoRoot, options.config.layout.acceptedDir);
-    const proposedDir = path17.join(options.repoRoot, options.config.layout.proposedDir);
+    const acceptedDir = path18.join(options.repoRoot, options.config.layout.acceptedDir);
+    const proposedDir = path18.join(options.repoRoot, options.config.layout.proposedDir);
     const numbers = [];
     for (const dir of [acceptedDir, proposedDir]) {
       for (const name of await listAdrFiles(dir)) {
@@ -4441,8 +4515,8 @@ async function runCreate(options) {
       options.title,
       options.body
     );
-    const relPath = path17.join(targetDir, filename);
-    const absPath = path17.join(options.repoRoot, relPath);
+    const relPath = path18.join(targetDir, filename);
+    const absPath = path18.join(options.repoRoot, relPath);
     await atomicWriteFile(absPath, content);
     return relPath;
   } finally {
@@ -4452,18 +4526,18 @@ async function runCreate(options) {
 
 // src/cli/commands/promote.ts
 init_lifecycle();
-import { readFile as readFile13 } from "node:fs/promises";
-import path19 from "node:path";
+import { readFile as readFile14 } from "node:fs/promises";
+import path20 from "node:path";
 init_validation();
 
 // src/core/audit-log.ts
 import { appendFile, mkdir as mkdir4 } from "node:fs/promises";
-import path18 from "node:path";
+import path19 from "node:path";
 async function appendAuditLog(repoRoot, entry) {
-  const logDir = path18.join(repoRoot, ".adr-governance/state/logs");
+  const logDir = path19.join(repoRoot, ".adr-governance/state/logs");
   await mkdir4(logDir, { recursive: true });
   const line = JSON.stringify({ ...entry, timestamp: (/* @__PURE__ */ new Date()).toISOString() }) + "\n";
-  await appendFile(path18.join(logDir, "audit.ndjson"), line, "utf8");
+  await appendFile(path19.join(logDir, "audit.ndjson"), line, "utf8");
 }
 
 // src/cli/commands/promote.ts
@@ -4472,14 +4546,14 @@ async function runPromote(options) {
   try {
     const numMatch = /ADR-(\d+)/.exec(options.adrId);
     if (!numMatch) throw new Error(`Invalid ADR id: ${options.adrId}`);
-    const proposedDir = path19.join(options.repoRoot, options.config.layout.proposedDir);
+    const proposedDir = path20.join(options.repoRoot, options.config.layout.proposedDir);
     const files = await listAdrFiles(proposedDir);
     const digits = options.config.documents.idDigits;
     const padded = numMatch[1]?.padStart(digits, "0");
     const matchFile = files.find((f) => f.startsWith(`${padded}-`));
     if (!matchFile) throw new Error(`Proposed ADR not found: ${options.adrId}`);
-    const rel = path19.join(options.config.layout.proposedDir, matchFile);
-    const content = await readFile13(path19.join(options.repoRoot, rel), "utf8");
+    const rel = path20.join(options.config.layout.proposedDir, matchFile);
+    const content = await readFile14(path20.join(options.repoRoot, rel), "utf8");
     const parsed = parseAdrFromPath(rel, content, "proposed", options.config);
     if (!parsed) throw new Error("Could not parse ADR");
     const check = canPromoteToAccepted(
@@ -4489,18 +4563,15 @@ async function runPromote(options) {
     );
     if (!check.ok) throw new Error(check.reason ?? "Cannot promote");
     const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-    const newContent = buildAdrContent(
-      {
-        status: "accepted",
-        date: today,
-        acceptance: options.approval ?? "automatic"
-      },
-      parsed.title,
-      parsed.body
-    );
+    const updates = {
+      status: "accepted",
+      date: today,
+      acceptance: options.approval ?? "automatic"
+    };
+    const newContent = parseFrontmatter(content).frontmatter ? updateFrontmatter(content, updates) : buildAdrContent({ ...parsed.frontmatter, ...updates }, parsed.title, parsed.body);
     if (options.config.layout.mode === "split") {
-      const destRel = path19.join(options.config.layout.acceptedDir, matchFile);
-      const destAbs = path19.join(options.repoRoot, destRel);
+      const destRel = path20.join(options.config.layout.acceptedDir, matchFile);
+      const destAbs = path20.join(options.repoRoot, destRel);
       let moveKind;
       try {
         moveKind = await movePathInRepo(options.repoRoot, rel, destRel);
@@ -4533,7 +4604,7 @@ async function runPromote(options) {
       }
       return destRel;
     }
-    await atomicWriteFile(path19.join(options.repoRoot, rel), newContent);
+    await atomicWriteFile(path20.join(options.repoRoot, rel), newContent);
     return rel;
   } finally {
     await release();
@@ -4541,52 +4612,29 @@ async function runPromote(options) {
 }
 
 // src/cli/commands/supersede.ts
-import { readFile as readFile14 } from "node:fs/promises";
-import path20 from "node:path";
+init_lifecycle();
+import { readFile as readFile15 } from "node:fs/promises";
+import path21 from "node:path";
 init_validation();
-var RAW_FRONTMATTER_RE = /^(---\r?\n)([\s\S]*?)(\r?\n---)([\s\S]*)$/;
-function updateFrontmatter(content, updates) {
-  const match = RAW_FRONTMATTER_RE.exec(content);
-  if (!match) throw new Error("Could not update ADR frontmatter");
-  const opening = match[1] ?? "";
-  const yaml = match[2] ?? "";
-  const closing = match[3] ?? "";
-  const body = match[4] ?? "";
-  const newline = yaml.includes("\r\n") ? "\r\n" : "\n";
-  const pending = new Map(Object.entries(updates));
-  const lines = yaml.split(/\r?\n/).map((line) => {
-    const field = /^(\s*)([^:\s][^:]*?)\s*:/.exec(line);
-    if (!field) return line;
-    const key = field[2]?.trim();
-    if (!key || !pending.has(key)) return line;
-    const value = pending.get(key);
-    pending.delete(key);
-    return `${field[1] ?? ""}${key}: ${value}`;
-  });
-  for (const [key, value] of pending) {
-    lines.push(`${key}: ${value}`);
-  }
-  return `${opening}${lines.join(newline)}${closing}${body}`;
-}
 async function runSupersede(options) {
   const release = await acquireLock(options.repoRoot, "supersede", "supersede");
   try {
     const oldNum = /ADR-(\d+)/.exec(options.oldAdrId)?.[1];
     const newNum = /ADR-(\d+)/.exec(options.newAdrId)?.[1];
     if (!oldNum || !newNum) throw new Error("Invalid ADR ids");
-    const acceptedDir = path20.join(options.repoRoot, options.config.layout.acceptedDir);
+    const acceptedDir = path21.join(options.repoRoot, options.config.layout.acceptedDir);
     const files = await listAdrFiles(acceptedDir);
     const digits = options.config.documents.idDigits;
     const oldFile = files.find((f) => f.startsWith(`${oldNum.padStart(digits, "0")}-`));
     if (!oldFile) throw new Error(`Old ADR not found: ${options.oldAdrId}`);
     const newFile = files.find((f) => f.startsWith(`${newNum.padStart(digits, "0")}-`));
     if (!newFile) throw new Error(`New ADR not found: ${options.newAdrId}`);
-    const oldRel = path20.join(options.config.layout.acceptedDir, oldFile);
-    const newRel = path20.join(options.config.layout.acceptedDir, newFile);
-    const oldPath = path20.join(options.repoRoot, oldRel);
-    const newPath = path20.join(options.repoRoot, newRel);
-    const oldContent = await readFile14(oldPath, "utf8");
-    const newContent = await readFile14(newPath, "utf8");
+    const oldRel = path21.join(options.config.layout.acceptedDir, oldFile);
+    const newRel = path21.join(options.config.layout.acceptedDir, newFile);
+    const oldPath = path21.join(options.repoRoot, oldRel);
+    const newPath = path21.join(options.repoRoot, newRel);
+    const oldContent = await readFile15(oldPath, "utf8");
+    const newContent = await readFile15(newPath, "utf8");
     const oldParsed = parseAdrFromPath(oldRel, oldContent, "accepted", options.config);
     const newParsed = parseAdrFromPath(newRel, newContent, "accepted", options.config);
     if (!oldParsed) throw new Error("Could not parse old ADR");
@@ -4636,30 +4684,36 @@ async function runSupersede(options) {
 
 // src/cli/commands/turn-close.ts
 init_types();
-import { mkdir as mkdir7, writeFile as writeFile5 } from "node:fs/promises";
-import path23 from "node:path";
+import { writeFile as writeFile5 } from "node:fs/promises";
+import path24 from "node:path";
 
 // src/hooks/audit-chain.ts
-import { mkdir as mkdir6, readFile as readFile16, unlink as unlink2, writeFile as writeFile4 } from "node:fs/promises";
-import path22 from "node:path";
+import { mkdir as mkdir6, readFile as readFile17, unlink as unlink2, writeFile as writeFile4 } from "node:fs/promises";
+import path23 from "node:path";
 
 // src/hooks/turn-pointer.ts
-import { mkdir as mkdir5, readdir as readdir5, readFile as readFile15, writeFile as writeFile3 } from "node:fs/promises";
-import path21 from "node:path";
+import { mkdir as mkdir5, readdir as readdir6, readFile as readFile16, writeFile as writeFile3 } from "node:fs/promises";
+import path22 from "node:path";
+import { createHash as createHash3 } from "node:crypto";
 var CURRENT_TURN_DIR = ".adr-governance/state/current-turn";
 var LEGACY_CURRENT_TURN_POINTER = ".adr-governance/state/current-turn.json";
 function sanitizeSessionId(sessionId) {
   const trimmed = sessionId.trim();
   if (!trimmed) return "default";
-  return trimmed.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 128);
+  if (/^[a-zA-Z0-9._-]{1,128}$/.test(trimmed)) return trimmed;
+  return `~${createHash3("sha256").update(trimmed).digest("hex")}`;
 }
 function turnPointerRelPath(sessionId) {
-  return path21.join(CURRENT_TURN_DIR, `${sanitizeSessionId(sessionId)}.json`);
+  return path22.join(CURRENT_TURN_DIR, `${sanitizeSessionId(sessionId)}.json`);
 }
 async function loadTurnStateForSession(repoRoot, sessionId) {
   const trimmed = sessionId?.trim();
   if (trimmed) {
-    return readPointerTurnState(repoRoot, turnPointerRelPath(trimmed));
+    const state = await readPointerTurnState(repoRoot, turnPointerRelPath(trimmed));
+    if (state && (state.sessionId === trimmed || state.conversationId === trimmed)) return state;
+    const legacyName = trimmed.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 128);
+    const legacy = await readPointerTurnState(repoRoot, path22.join(CURRENT_TURN_DIR, `${legacyName}.json`));
+    return legacy && (legacy.sessionId === trimmed || legacy.conversationId === trimmed) ? legacy : null;
   }
   const fromLegacy = await readPointerTurnState(repoRoot, LEGACY_CURRENT_TURN_POINTER);
   if (fromLegacy) return fromLegacy;
@@ -4677,10 +4731,10 @@ async function resolveTurnStateForClose(repoRoot, sessionId) {
   return null;
 }
 async function findLatestUnreceiptedTurnForConversation(repoRoot, conversationId) {
-  const turnsDir = path21.join(repoRoot, STATE_DIR, "turns");
+  const turnsDir = path22.join(repoRoot, STATE_DIR, "turns");
   let entries;
   try {
-    entries = await readdir5(turnsDir);
+    entries = await readdir6(turnsDir);
   } catch {
     return null;
   }
@@ -4689,7 +4743,7 @@ async function findLatestUnreceiptedTurnForConversation(repoRoot, conversationId
     if (!entry.endsWith(".json") || entry.startsWith("receipt-")) continue;
     try {
       const state = JSON.parse(
-        await readFile15(path21.join(turnsDir, entry), "utf8")
+        await readFile16(path22.join(turnsDir, entry), "utf8")
       );
       if (state.receipt !== null) continue;
       if (state.conversationId === conversationId || state.conversationId === void 0 && state.sessionId === conversationId) {
@@ -4705,10 +4759,10 @@ async function findLatestUnreceiptedTurnForConversation(repoRoot, conversationId
 }
 async function readPointerTurnState(repoRoot, relPointer) {
   try {
-    const pointer = JSON.parse(await readFile15(path21.join(repoRoot, relPointer), "utf8"));
+    const pointer = JSON.parse(await readFile16(path22.join(repoRoot, relPointer), "utf8"));
     if (!pointer.turnStatePath) return null;
-    const statePath = path21.join(repoRoot, pointer.turnStatePath);
-    return JSON.parse(await readFile15(statePath, "utf8"));
+    const statePath = path22.join(repoRoot, pointer.turnStatePath);
+    return JSON.parse(await readFile16(statePath, "utf8"));
   } catch {
     return null;
   }
@@ -4722,11 +4776,11 @@ function auditChainScope(conversationId) {
   return trimmed && trimmed.length > 0 ? trimmed : PENDING_AUDIT_CONVERSATION_ID;
 }
 function auditChainRelPath(conversationId) {
-  return path22.join(AUDIT_CHAIN_DIR, `${sanitizeSessionId(conversationId)}.json`);
+  return path23.join(AUDIT_CHAIN_DIR, `${sanitizeSessionId(conversationId)}.json`);
 }
 async function clearAuditChain(repoRoot, conversationId) {
   try {
-    await unlink2(path22.join(repoRoot, auditChainRelPath(conversationId)));
+    await unlink2(path23.join(repoRoot, auditChainRelPath(conversationId)));
   } catch {
   }
 }
@@ -4737,7 +4791,7 @@ async function markAuditChainResolvedForScope(repoRoot, conversationId) {
 // src/cli/commands/turn-close.ts
 async function recordTurnReceiptForState(repoRoot, state, receipt) {
   state.receipt = receipt;
-  const statePath = path23.join(repoRoot, STATE_DIR, "turns", `${state.turnId}.json`);
+  const statePath = path24.join(repoRoot, STATE_DIR, "turns", `${state.turnId}.json`);
   await writeFile5(statePath, JSON.stringify(state, null, 2));
   await markAuditChainResolvedForScope(repoRoot, state.conversationId);
 }
@@ -4760,97 +4814,23 @@ async function runTurnClose(options) {
     await recordTurnReceiptForState(options.repoRoot, state, receipt);
     return;
   }
-  const stateDir = path23.join(options.repoRoot, STATE_DIR, "turns");
-  await mkdir7(stateDir, { recursive: true });
-  await writeFile5(
-    path23.join(stateDir, `receipt-${Date.now()}.json`),
-    JSON.stringify({ receipt }, null, 2)
+  throw new Error(
+    options.sessionId?.trim() ? "No active turn found for this --session-id. Use the session ID from the current hook instructions." : "--session-id is required when there is no legacy current turn. Use the session ID from the current hook instructions."
   );
 }
 
 // src/cli/commands/sync.ts
 import { readFile as readFile18 } from "node:fs/promises";
-import { existsSync as existsSync12 } from "node:fs";
-import path25 from "node:path";
-
-// src/installer/generated-files.ts
-import { readFile as readFile17, readdir as readdir6, stat as stat2 } from "node:fs/promises";
 import { existsSync as existsSync11 } from "node:fs";
-import path24 from "node:path";
-init_numbering();
-var GENERATOR_VERSION = "0.2.0";
-async function hashFile(absPath) {
-  const content = await readFile17(absPath, "utf8");
-  return sha256(content);
-}
-async function buildManifest(repoRoot, packageRoot) {
-  const files = {};
-  const targets = [
-    ".agents/skills/managing-adrs",
-    ".adr-governance/bin",
-    ".adr-governance/schema",
-    ".adr-governance/.gitignore",
-    ".cursor/rules/adr-governance.mdc",
-    ".cursor/hooks/adr-governance.mjs",
-    ".cursor/hooks.json",
-    ".claude/commands/adr.md",
-    ".claude/hooks/adr-governance.mjs",
-    ".claude/settings.json",
-    ".codex/hooks/adr-governance.mjs",
-    ".codex/hooks.json",
-    ".gemini/hooks/adr-governance.mjs",
-    ".gemini/settings.json",
-    "adr.config.json"
-  ];
-  for (const rel of targets) {
-    const abs = path24.join(repoRoot, rel);
-    if (!existsSync11(abs)) continue;
-    const s = await stat2(abs);
-    if (s.isDirectory()) {
-      const entries = await readdir6(abs, { recursive: true });
-      for (const entry of entries) {
-        const entryPath = path24.join(abs, String(entry));
-        const st = await stat2(entryPath);
-        if (st.isFile()) {
-          const r = path24.relative(repoRoot, entryPath);
-          files[r] = await hashFile(entryPath);
-        }
-      }
-    } else {
-      files[rel] = await hashFile(abs);
-    }
-  }
-  void packageRoot;
-  return {
-    version: GENERATOR_VERSION,
-    generatorVersion: GENERATOR_VERSION,
-    files
-  };
-}
-async function copySkillAndBundles(packageRoot, repoRoot, plan) {
-  const filteredOperations = plan.operations.filter((op) => {
-    if (op.kind !== "create") return true;
-    return !existsSync11(path24.join(repoRoot, op.path));
-  });
-  await applyPlanOperations(repoRoot, filteredOperations);
-  const postApplySteps = plan.postApplySteps ?? ["write-manifest"];
-  if (postApplySteps.includes("write-manifest")) {
-    const manifest = await buildManifest(repoRoot, packageRoot);
-    await atomicWriteFile(
-      path24.join(repoRoot, ".adr-governance/manifest.json"),
-      JSON.stringify(manifest, null, 2) + "\n"
-    );
-  }
-}
-
-// src/cli/commands/sync.ts
+import path25 from "node:path";
 async function runSync(options) {
   const manifestPath = path25.join(options.repoRoot, ".adr-governance/manifest.json");
-  if (existsSync12(manifestPath)) {
+  if (existsSync11(manifestPath)) {
     const existing = JSON.parse(await readFile18(manifestPath, "utf8"));
     for (const [rel, expectedHash] of Object.entries(existing.files ?? {})) {
+      if (isUserManagedFile(rel)) continue;
       const abs = path25.join(options.repoRoot, rel);
-      if (!existsSync12(abs)) continue;
+      if (!existsSync11(abs)) continue;
       const actual = await readFile18(abs, "utf8");
       const { sha256: sha2562 } = await Promise.resolve().then(() => (init_numbering(), numbering_exports));
       if (sha2562(actual) !== expectedHash) {
@@ -4860,29 +4840,35 @@ async function runSync(options) {
       }
     }
   }
+  const configPath = path25.join(options.repoRoot, "adr.config.json");
+  const hasCurrentConfig = existsSync11(configPath);
+  const config = hasCurrentConfig ? parseConfig(JSON.parse(await readFile18(configPath, "utf8"))).config : options.plan.proposedConfig;
   const tracked = await gitLsFiles(options.repoRoot);
   const planBuild = await buildInitPlanOperations(
     options.packageRoot,
     options.repoRoot,
-    options.plan.proposedConfig,
+    config,
     detectCiProvider(tracked)
   );
   await copySkillAndBundles(options.packageRoot, options.repoRoot, {
     ...options.plan,
-    operations: planBuild.operations,
+    proposedConfig: config,
+    // Sync must not serialize user-owned configuration: that loses unknown settings
+    // and can overwrite edits with a stale plan's proposed configuration.
+    operations: planBuild.operations.filter((op) => !hasCurrentConfig || op.path !== "adr.config.json"),
     postApplySteps: options.plan.postApplySteps ?? ["write-manifest"]
   });
 }
 
 // src/cli/resolve-package-root.ts
-import { existsSync as existsSync13 } from "node:fs";
+import { existsSync as existsSync12 } from "node:fs";
 import path26 from "node:path";
 function resolvePackageRoot(defaultRoot, from) {
   const packageRoot = from ? path26.resolve(from) : defaultRoot;
   const skillSrc = path26.join(packageRoot, "skill/managing-adrs");
   const cliBundle = path26.join(packageRoot, "dist/bundle/cli.mjs");
   const hookBundle = path26.join(packageRoot, "dist/bundle/hook.mjs");
-  if (!existsSync13(skillSrc) || !existsSync13(cliBundle) || !existsSync13(hookBundle)) {
+  if (!existsSync12(skillSrc) || !existsSync12(cliBundle) || !existsSync12(hookBundle)) {
     throw new Error(
       "Requires the adr-governance package root (skill/ and dist/bundle/). Use --from /path/to/adr-governance"
     );

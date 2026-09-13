@@ -129,6 +129,8 @@ After `init`, target repos get `.github/workflows/adr-governance.yml`, which run
 - SchemaVersion 1 evidence still parses during v0.2.x but triggers a `decision-evidence-legacy` warning; v0.3.0 will reject it.
 - Hook stderr may show a one-time **metadata fallback** warning when untracked file budgets are exceeded; CI `check --base` remains authoritative.
 
+Reliability fixes bind `check --base` policy and the CI verifier to the immutable base, preserve user config during sync, and normalize change sets across rename/EOL handling. After upgrading, re-attest open PRs and update existing workflows to include `edited` and run the base bundle. See [upgrade instructions and finding dispositions](docs/reliability-fixes-2026-09-13.md).
+
 ### Design principles
 
 1. **Do not persist prompt or transcript bodies** — hashes and metadata only
@@ -185,7 +187,7 @@ node .adr-governance/bin/cli.mjs create --status proposed --title "..." --body-f
 node .adr-governance/bin/cli.mjs promote ADR-0007 [--approval human]
 node .adr-governance/bin/cli.mjs supersede ADR-0002 --by ADR-0008
 node .adr-governance/bin/cli.mjs sync --from /path/to/adr-governance
-node .adr-governance/bin/cli.mjs turn-close --outcome no-change --reason reversible
+node .adr-governance/bin/cli.mjs turn-close --outcome no-change --reason reversible --session-id '<ID supplied by the hook>'
 ```
 
 ## Principles

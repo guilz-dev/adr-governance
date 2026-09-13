@@ -14,10 +14,9 @@ import {
 } from '../core/repository-state.js'
 import { buildHookContext, isAuditFollowUpPrompt } from './common.js'
 import type { TurnState } from '../core/types.js'
-import { buildRepositoryFingerprint, degradationWarningMessage } from '../core/fingerprint.js'
+import { buildAuditRepositoryFingerprint, degradationWarningMessage } from '../core/fingerprint.js'
 import { buildWorkingDecisionCorpus, snapshotDecisionCorpus } from '../core/decision-corpus.js'
 import { pruneOldState } from '../core/locks.js'
-import { gitLsFiles } from '../cli/git.js'
 import {
   loadAuditChainForScope,
   markAuditChainResolvedForScope,
@@ -79,10 +78,13 @@ export async function runBeforeTurn(input: BeforeTurnInput): Promise<BeforeTurnR
     : assessPromptRisk(input.prompt, config)
   const relevant = isAuditFollowUp ? [] : rankRelevantAdrs(input.prompt, adrs)
 
-  const tracked = await gitLsFiles(repoRoot)
-  const beforeFingerprint = await buildRepositoryFingerprint(repoRoot, tracked, config)
+  const beforeFingerprint = await buildAuditRepositoryFingerprint(repoRoot)
   const degradationReason = beforeFingerprint.degradationReason
   const shouldWarnDegradation = degradationReason !== undefined
+
+  const sessionId =
+    input.sessionId?.trim() ||
+    (input.hookPayload ? resolveHookTurnKey(input.hookPayload) : randomUUID())
 
   const hookContext = buildHookContext(
     config,
@@ -90,15 +92,13 @@ export async function runBeforeTurn(input: BeforeTurnInput): Promise<BeforeTurnR
     assessed.signals,
     relevant.map((a) => a.path),
     shouldWarnDegradation ? degradationReason : undefined,
+    sessionId,
   )
 
   const stateDir = path.join(repoRoot, STATE_DIR, 'turns')
   await mkdir(stateDir, { recursive: true })
 
   const turnId = randomUUID()
-  const sessionId =
-    input.sessionId?.trim() ||
-    (input.hookPayload ? resolveHookTurnKey(input.hookPayload) : randomUUID())
 
   const beforeDecisionCorpus = snapshotDecisionCorpus(
     await buildWorkingDecisionCorpus(repoRoot, config),

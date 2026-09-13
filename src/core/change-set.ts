@@ -5,6 +5,9 @@ import path from 'node:path'
 import {
   listSnapshotChangedPaths,
   readBlobAtRef,
+  readCleanWorktreeBlob,
+  readGitBoolean,
+  readIndexMode,
   readModeAtRef,
   resolveCommit,
   resolveMergeBase,
@@ -66,6 +69,8 @@ async function readCurrentSide(
   repoRoot: string,
   relativePath: string,
 ): Promise<SnapshotSide> {
+  const indexMode = await readIndexMode(repoRoot, relativePath)
+  if (indexMode === '160000') throw new Error(`unsupported gitlink snapshot: ${relativePath}`)
   const abs = path.join(repoRoot, relativePath)
   let info
   try {
@@ -83,8 +88,15 @@ async function readCurrentSide(
     return null
   }
 
-  const mode = (info.mode & 0o111) !== 0 ? '100755' : '100644'
-  const content = await readFile(abs)
+  // With symlink support disabled Git checks out a link as its plain target text.
+  if (indexMode === '120000' && !(await readGitBoolean(repoRoot, 'core.symlinks', true))) {
+    return { mode: '120000', contentHash: hashContent(await readFile(abs)) }
+  }
+  const trustFileMode = await readGitBoolean(repoRoot, 'core.filemode', true)
+  const mode = trustFileMode
+    ? ((info.mode & 0o100) !== 0 ? '100755' : '100644')
+    : (indexMode === '100755' ? '100755' : '100644')
+  const content = await readCleanWorktreeBlob(repoRoot, relativePath)
   return { mode, contentHash: hashContent(content) }
 }
 
@@ -94,6 +106,7 @@ async function readBaseSide(
   relativePath: string,
 ): Promise<SnapshotSide> {
   const mode = await readModeAtRef(repoRoot, comparisonBase, relativePath)
+  if (mode === '160000') throw new Error(`unsupported gitlink snapshot: ${relativePath}`)
   if (!mode) return null
   const blob = await readBlobAtRef(repoRoot, comparisonBase, relativePath)
   if (blob === null) return null

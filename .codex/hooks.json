@@ -7,7 +7,7 @@
             "type": "command",
             "command": "node \"$(git rev-parse --show-toplevel)/.codex/hooks/adr-governance.mjs\" before-turn",
             "commandWindows": "powershell.exe -NoProfile -Command \"$r=(git rev-parse --show-toplevel); node \\\"$r/.codex/hooks/adr-governance.mjs\\\" before-turn\"",
-            "timeout": 2
+            "timeout": 3
           }
         ]
       }
@@ -19,7 +19,7 @@
             "type": "command",
             "command": "node \"$(git rev-parse --show-toplevel)/.codex/hooks/adr-governance.mjs\" after-turn",
             "commandWindows": "powershell.exe -NoProfile -Command \"$r=(git rev-parse --show-toplevel); node \\\"$r/.codex/hooks/adr-governance.mjs\\\" after-turn\"",
-            "timeout": 2
+            "timeout": 3
           }
         ]
       }

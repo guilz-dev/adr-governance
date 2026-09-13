@@ -154,7 +154,7 @@ function codexManagedKeys(): Record<string, { hooks: HookEntry[] }> {
         type: 'command',
         command: `node "$(git rev-parse --show-toplevel)/.codex/hooks/adr-governance.mjs" ${phase}`,
         commandWindows: `powershell.exe -NoProfile -Command "$r=(git rev-parse --show-toplevel); node \\"$r/.codex/hooks/adr-governance.mjs\\" ${phase}"`,
-        timeout: 2,
+        timeout: 3,
       },
     ],
   })
@@ -171,7 +171,7 @@ function geminiManagedKeys(): Record<string, { hooks: HookEntry[] }> {
         name,
         type: 'command',
         command: `node "$GEMINI_PROJECT_DIR/.gemini/hooks/adr-governance.mjs" ${phase}`,
-        timeout: 2000,
+        timeout: 3000,
       },
     ],
   })

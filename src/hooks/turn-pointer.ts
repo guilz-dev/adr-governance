@@ -1,5 +1,6 @@
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 
 import { STATE_DIR } from '../core/repository-state.js'
 import type { TurnState } from '../core/types.js'
@@ -10,7 +11,9 @@ export const LEGACY_CURRENT_TURN_POINTER = '.adr-governance/state/current-turn.j
 export function sanitizeSessionId(sessionId: string): string {
   const trimmed = sessionId.trim()
   if (!trimmed) return 'default'
-  return trimmed.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 128)
+  if (/^[a-zA-Z0-9._-]{1,128}$/.test(trimmed)) return trimmed
+  // A distinct namespace prevents collisions with literal safe runtime IDs.
+  return `~${createHash('sha256').update(trimmed).digest('hex')}`
 }
 
 export function turnPointerRelPath(sessionId: string): string {
@@ -39,7 +42,12 @@ export async function loadTurnStateForSession(
 ): Promise<TurnState | null> {
   const trimmed = sessionId?.trim()
   if (trimmed) {
-    return readPointerTurnState(repoRoot, turnPointerRelPath(trimmed))
+    const state = await readPointerTurnState(repoRoot, turnPointerRelPath(trimmed))
+    if (state && (state.sessionId === trimmed || state.conversationId === trimmed)) return state
+    // Read older sanitized pointers only after verifying the saved session identity.
+    const legacyName = trimmed.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 128)
+    const legacy = await readPointerTurnState(repoRoot, path.join(CURRENT_TURN_DIR, `${legacyName}.json`))
+    return legacy && (legacy.sessionId === trimmed || legacy.conversationId === trimmed) ? legacy : null
   }
 
   const fromLegacy = await readPointerTurnState(repoRoot, LEGACY_CURRENT_TURN_POINTER)

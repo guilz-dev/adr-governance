@@ -11,6 +11,7 @@ import { contentHashForFile, parseDecisionEvidence, serializeDecisionEvidence } 
 import type { AdrConfig, NoAdrReason } from '../../core/types.js'
 import { loadAllAdrs } from '../../core/repository-state.js'
 import { refExists } from '../git-diff.js'
+import { readBasePolicy } from '../../core/base-policy.js'
 
 export type AttestOptions = {
   repoRoot: string
@@ -33,12 +34,13 @@ export async function runAttest(options: AttestOptions) {
     throw new BaseRefUnavailableError(options.baseRef)
   }
 
-  const corpus = await buildRefDecisionCorpus(options.repoRoot, options.baseRef, options.config)
+  const policy = await readBasePolicy(options.repoRoot, options.baseRef)
+  const corpus = await buildRefDecisionCorpus(options.repoRoot, options.baseRef, policy)
   const decisionCorpusHash = hashDecisionCorpus(corpus)
   const changeSet = await buildChangeSet(options.repoRoot, options.baseRef)
   const baseCommit = changeSet.baseCommit
 
-  const adrs = await loadAllAdrs(options.repoRoot, options.config)
+  const adrs = await loadAllAdrs(options.repoRoot, policy)
   const adrById = new Map(adrs.map((a) => [a.id, a]))
 
   if (hasAdr) {

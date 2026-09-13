@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
-import { lstat } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
@@ -11,6 +12,7 @@ async function git(repoRoot: string, args: string[]): Promise<string> {
   const { stdout } = await execFileAsync('git', args, {
     cwd: repoRoot,
     maxBuffer: 10 * 1024 * 1024,
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_LITERAL_PATHSPECS: '1' },
   })
   return stdout
 }
@@ -38,13 +40,8 @@ async function shouldIncludePath(repoRoot: string, relativePath: string): Promis
   const normalized = normalizeRepoPath(relativePath)
   if (!normalized || normalized.startsWith(STATE_PREFIX)) return false
   if (await isIgnored(repoRoot, normalized)) return false
-  const abs = path.join(repoRoot, normalized)
-  try {
-    const info = await lstat(abs)
-    if (info.isDirectory()) return false
-  } catch {
-    // Path may exist only in Git history.
-  }
+  // A directory can replace a tracked file or represent a gitlink. Keep the
+  // candidate so the snapshot preserves its base side or rejects its mode.
   return true
 }
 
@@ -88,39 +85,15 @@ export async function listSnapshotChangedPaths(
     if (await shouldIncludePath(repoRoot, relativePath)) paths.add(relativePath)
   }
 
-  const status = await git(repoRoot, ['status', '--porcelain', '-z', '--untracked-files=all'])
-  const entries = status.split('\0').filter((entry) => entry.length > 0)
-  for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i]!
+  // Disable rename detection so each NUL record always contains one path,
+  // including both sides of staged and intent-to-add renames.
+  const status = await git(repoRoot, [
+    'status', '--porcelain', '-z', '--no-renames', '--untracked-files=all',
+  ])
+  for (const entry of status.split('\0')) {
     if (entry.length < 4) continue
-    const code = entry.slice(0, 2)
-    const raw = entry.slice(3)
-    if (code.startsWith('R') && raw.includes(' -> ')) {
-      const [from, to] = raw.split(' -> ')
-      if (from && (await shouldIncludePath(repoRoot, from))) {
-        paths.add(normalizeRepoPath(from))
-      }
-      if (to && (await shouldIncludePath(repoRoot, to))) {
-        paths.add(normalizeRepoPath(to))
-      }
-      continue
-    }
-    if (code.startsWith('R') && !raw.includes(' -> ')) {
-      if (raw && (await shouldIncludePath(repoRoot, raw))) {
-        paths.add(normalizeRepoPath(raw))
-      }
-      const source = entries[i + 1]
-      if (source && !source.includes(' ')) {
-        if (await shouldIncludePath(repoRoot, source)) {
-          paths.add(normalizeRepoPath(source))
-        }
-        i += 1
-      }
-      continue
-    }
-    if (raw && (await shouldIncludePath(repoRoot, raw))) {
-      paths.add(normalizeRepoPath(raw))
-    }
+    const relativePath = entry.slice(3)
+    if (await shouldIncludePath(repoRoot, relativePath)) paths.add(relativePath)
   }
 
   return [...paths].sort((a, b) => Buffer.from(a).compare(Buffer.from(b)))
@@ -148,7 +121,7 @@ export async function readModeAtRef(
   repoRoot: string,
   ref: string,
   relativePath: string,
-): Promise<'100644' | '100755' | '120000' | null> {
+): Promise<'100644' | '100755' | '120000' | '160000' | null> {
   const normalized = normalizeRepoPath(relativePath)
   try {
     const output = (
@@ -156,35 +129,60 @@ export async function readModeAtRef(
     ).trim()
     if (!output) return null
     const mode = output.split(/\s+/)[0]
-    if (mode === '100644' || mode === '100755' || mode === '120000') return mode
+    if (mode === '100644' || mode === '100755' || mode === '120000' || mode === '160000') return mode
     return null
   } catch {
     return null
   }
 }
 
-function parsePathList(output: string): string[] {
-  return output
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
+export async function listChangedPaths(repoRoot: string, baseRef: string): Promise<string[]> {
+  return listSnapshotChangedPaths(repoRoot, baseRef)
 }
 
-export async function listChangedPaths(repoRoot: string, baseRef: string): Promise<string[]> {
-  const paths = new Set<string>()
-
-  const diff = await git(repoRoot, ['diff', '--name-only', `${baseRef}...HEAD`])
-  for (const p of parsePathList(diff)) paths.add(p)
-
-  const status = await git(repoRoot, ['status', '--porcelain', '-u', '--untracked-files=all'])
-  for (const line of status.split('\n')) {
-    if (!line.trim()) continue
-    const raw = line.slice(3).trim()
-    const filePath = raw.includes(' -> ') ? (raw.split(' -> ').pop() ?? raw) : raw
-    if (filePath) paths.add(filePath)
+/** Read exactly the bytes Git would store, including clean filters and EOL conversion. */
+export async function readCleanWorktreeBlob(repoRoot: string, relativePath: string): Promise<Buffer> {
+  const objectDirectory = await mkdtemp(path.join(tmpdir(), 'adr-snapshot-objects-'))
+  try {
+    const sourceObjects = path.resolve(repoRoot, (await git(repoRoot, ['rev-parse', '--git-path', 'objects'])).trim())
+    const env = {
+      ...process.env,
+      GIT_OPTIONAL_LOCKS: '0',
+      GIT_OBJECT_DIRECTORY: objectDirectory,
+      // Git accepts C-quoted paths; quoting also handles path-list separators.
+      GIT_ALTERNATE_OBJECT_DIRECTORIES: JSON.stringify(sourceObjects),
+    }
+    const { stdout: oid } = await execFileAsync('git', [
+      'hash-object', '-w', `--path=${relativePath}`, '--', path.join(repoRoot, relativePath),
+    ], { cwd: repoRoot, env, maxBuffer: 10 * 1024 * 1024 })
+    const { stdout } = await execFileAsync('git', ['cat-file', 'blob', oid.trim()], {
+      // Match readFile's current-side behavior: buffer the complete file without
+      // imposing a subprocess output limit on otherwise valid large changes.
+      cwd: repoRoot, env, encoding: 'buffer', maxBuffer: Infinity,
+    })
+    return stdout
+  } finally {
+    await rm(objectDirectory, { recursive: true, force: true })
   }
+}
 
-  return [...paths].sort()
+export async function readIndexMode(
+  repoRoot: string,
+  relativePath: string,
+): Promise<'100644' | '100755' | '120000' | '160000' | null> {
+  const output = await git(repoRoot, ['ls-files', '--stage', '-z', '--', relativePath])
+  const entry = output.split('\0').find((line) => line.split('\t')[0]?.endsWith(' 0'))
+  const mode = entry?.split(' ')[0]
+  return mode === '100644' || mode === '100755' || mode === '120000' || mode === '160000' ? mode : null
+}
+
+export async function readGitBoolean(repoRoot: string, key: string, fallback: boolean): Promise<boolean> {
+  try {
+    return (await git(repoRoot, ['config', '--bool', '--get', key])).trim() === 'true'
+  } catch (error) {
+    if ((error as { code?: number }).code === 1) return fallback
+    throw error
+  }
 }
 
 export async function readFileAtRef(
