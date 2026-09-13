@@ -84,7 +84,7 @@ describe('decision gate classification', () => {
     expect(result.issues.some((issue) => issue.code === 'decision-evidence-required')).toBe(false)
   })
 
-  it('exempts manifest-managed generated files without config exemptions', async () => {
+  it('exempts generated files registered in the trusted base manifest', async () => {
     const repo = await initRepo()
     const generatedPath = '.generated/adr-governance.js'
     const generatedContent = 'export const generated = true\n'
@@ -100,6 +100,11 @@ describe('decision gate classification', () => {
       }),
     )
 
+    await exec('git', ['add', '.'], { cwd: repo })
+    await exec('git', ['commit', '-m', 'register generated artifact'], { cwd: repo })
+    const updated = 'export const generated = false\n'
+    await writeFile(path.join(repo, generatedPath), updated)
+    await writeFile(path.join(repo, '.adr-governance/manifest.json'), JSON.stringify({ files: { [generatedPath]: createHash('sha256').update(updated).digest('hex') } }))
     const result = await runCheck(repo, { baseRef: 'HEAD' })
 
     expect(result.issues.some((issue) => issue.code === 'decision-evidence-required')).toBe(false)
@@ -142,6 +147,7 @@ describe('decision gate classification', () => {
     await exec('git', ['checkout', '--orphan', 'unrelated'], { cwd: repo })
     await exec('git', ['rm', '-rf', '.'], { cwd: repo })
     await writeFile(path.join(repo, 'unrelated.txt'), 'unrelated history\n')
+    await writeFile(path.join(repo, 'adr.config.json'), JSON.stringify(defaultConfig()))
     await exec('git', ['add', '.'], { cwd: repo })
     await exec('git', ['commit', '-m', 'unrelated base'], { cwd: repo })
     await exec('git', ['checkout', branch], { cwd: repo })

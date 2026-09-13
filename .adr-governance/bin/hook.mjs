@@ -77,6 +77,30 @@ function defaultChangeGate(overrides = {}) {
     ...overrides
   };
 }
+function parseRiskSignals(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return void 0;
+  const obj = raw;
+  const riskSignals = {};
+  if (Array.isArray(obj.highSignalTerms)) {
+    riskSignals.highSignalTerms = obj.highSignalTerms.filter(
+      (x) => typeof x === "string" && x.trim().length > 0
+    );
+  }
+  if (Array.isArray(obj.additionalTerms)) {
+    riskSignals.additionalTerms = obj.additionalTerms.filter(
+      (x) => typeof x === "string" && x.trim().length > 0
+    );
+  }
+  if (Array.isArray(obj.watchPaths)) {
+    riskSignals.watchPaths = obj.watchPaths.filter(
+      (x) => typeof x === "string" && x.trim().length > 0
+    );
+  }
+  if (riskSignals.highSignalTerms === void 0 && riskSignals.additionalTerms === void 0 && riskSignals.watchPaths === void 0) {
+    return void 0;
+  }
+  return riskSignals;
+}
 function defaultConfig(overrides = {}) {
   const base = {
     $schema: ".adr-governance/schema/adr-config.schema.json",
@@ -127,7 +151,8 @@ function defaultConfig(overrides = {}) {
     documents: { ...base.documents, ...overrides.documents },
     hooks: { ...base.hooks, ...overrides.hooks },
     changeGate: { ...base.changeGate, ...overrides.changeGate },
-    analysis: { ...base.analysis, ...overrides.analysis }
+    analysis: { ...base.analysis, ...overrides.analysis },
+    riskSignals: overrides.riskSignals
   };
 }
 function parseChangeGate(raw, version) {
@@ -163,7 +188,8 @@ function parseConfig(raw) {
     "documents",
     "hooks",
     "changeGate",
-    "analysis"
+    "analysis",
+    "riskSignals"
   ]);
   for (const key of Object.keys(obj)) {
     if (!knownKeys.has(key)) {
@@ -202,6 +228,11 @@ function parseConfig(raw) {
     "maxFiles",
     "maxBytesPerFile",
     "exclude"
+  ]);
+  warnUnknownNestedKeys(warnings, "riskSignals", obj.riskSignals, [
+    "highSignalTerms",
+    "additionalTerms",
+    "watchPaths"
   ]);
   const config = defaultConfig({ version });
   if (obj.$schema !== void 0) {
@@ -258,6 +289,7 @@ function parseConfig(raw) {
       config.analysis.exclude = a.exclude.filter((x) => typeof x === "string");
     }
   }
+  config.riskSignals = parseRiskSignals(obj.riskSignals);
   return { config, warnings };
 }
 
@@ -307,38 +339,51 @@ var HIGH_SIGNAL_TERMS_JA = [
   "\u8A2D\u8A08\u5224\u65AD",
   "\u30C8\u30EC\u30FC\u30C9\u30AA\u30D5"
 ];
-var WATCH_PATH_PATTERNS = [
-  /package\.json$/i,
-  /pnpm-workspace\.yaml$/i,
-  /package-lock\.json$/i,
-  /pnpm-lock\.yaml$/i,
-  /schema\.ts$/i,
-  /migrations?\//i,
-  /drizzle\//i,
-  /routes?\//i,
-  /\.github\/workflows\//i,
-  /wrangler\.toml$/i,
-  /terraform/i,
-  /infra\//i,
-  /auth/i,
-  /permission/i,
-  /policy/i
-];
+var ENGLISH_TERM_ALIASES = {
+  auth: ["auth", "authentication", "authorization"],
+  adr: ["adr", "adrs"],
+  api: ["api"]
+};
+var LIKELY_RISK_THRESHOLD = 3;
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function isJapaneseTerm(term) {
+  return /[\u3040-\u30ff\u3400-\u9fff]/.test(term);
+}
+function resolveHighSignalTerms(config) {
+  const base = config.riskSignals?.highSignalTerms ?? [...HIGH_SIGNAL_TERMS_EN, ...HIGH_SIGNAL_TERMS_JA];
+  const additional = config.riskSignals?.additionalTerms ?? [];
+  return [...base, ...additional];
+}
+function matchesEnglishTerm(normalized, term) {
+  const lower = term.toLowerCase();
+  if (lower.includes(" ")) {
+    return normalized.includes(lower);
+  }
+  const aliases = ENGLISH_TERM_ALIASES[lower] ?? [lower];
+  return aliases.some((alias) => {
+    const re = new RegExp(`\\b${escapeRegex(alias)}\\b`);
+    return re.test(normalized);
+  });
+}
+function matchesTerm(normalized, term) {
+  if (isJapaneseTerm(term)) {
+    return normalized.includes(term.toLowerCase());
+  }
+  return matchesEnglishTerm(normalized, term);
+}
 function assessPromptRisk(prompt, config) {
   const normalized = prompt.toLowerCase();
   const signals = [];
-  const terms = config.documents.language === "ja" ? [...HIGH_SIGNAL_TERMS_EN, ...HIGH_SIGNAL_TERMS_JA] : HIGH_SIGNAL_TERMS_EN;
-  for (const term of terms) {
-    if (normalized.includes(term.toLowerCase())) {
+  for (const term of resolveHighSignalTerms(config)) {
+    if (matchesTerm(normalized, term)) {
       signals.push(`term:${term}`);
     }
   }
-  if (signals.length >= 3) return { risk: "likely", signals };
+  if (signals.length >= LIKELY_RISK_THRESHOLD) return { risk: "likely", signals };
   if (signals.length >= 1) return { risk: "possible", signals };
   return { risk: "none", signals };
-}
-function isWatchPath(relativePath) {
-  return WATCH_PATH_PATTERNS.some((re) => re.test(relativePath));
 }
 function rankRelevantAdrs(prompt, adrs, limit = 5) {
   const tokens = prompt.toLowerCase().split(/\W+/).filter((t) => t.length > 2);
@@ -459,30 +504,36 @@ function findRepoRoot(startPath) {
     current = parent;
   }
 }
-async function listAdrFiles(dir) {
-  if (!existsSync(dir)) return [];
-  const entries = await readdir(dir, { withFileTypes: true });
-  return entries.filter((e) => e.isFile() && e.name.endsWith(".md") && e.name !== "README.md").map((e) => e.name);
-}
 async function loadAllAdrs(repoRoot, config) {
   const adrs = [];
-  const acceptedDir = path.join(repoRoot, config.layout.acceptedDir);
-  const proposedDir = path.join(repoRoot, config.layout.proposedDir);
-  for (const name of await listAdrFiles(acceptedDir)) {
-    const rel = path.join(config.layout.acceptedDir, name);
+  for (const rel of await listWorkingAdrPaths(repoRoot, config)) {
     const content = await readFile(path.join(repoRoot, rel), "utf8");
-    const parsed = parseAdrFromPath(rel, content, "accepted", config);
+    const parsed = parseAdrFromPath(rel, content, adrDirectoryKind(rel, config), config);
     if (parsed) adrs.push(parsed);
   }
-  if (config.layout.mode === "split" || config.layout.acceptedDir !== config.layout.proposedDir) {
-    for (const name of await listAdrFiles(proposedDir)) {
-      const rel = path.join(config.layout.proposedDir, name);
-      const content = await readFile(path.join(repoRoot, rel), "utf8");
-      const parsed = parseAdrFromPath(rel, content, "proposed", config);
-      if (parsed) adrs.push(parsed);
+  return adrs.sort((a, b) => a.number - b.number);
+}
+function adrDirectoryKind(relativePath, config) {
+  const directories = [[config.layout.acceptedDir, "accepted"]];
+  if (config.layout.proposedDir !== config.layout.acceptedDir) {
+    directories.push([config.layout.proposedDir, "proposed"]);
+  }
+  directories.sort((a, b) => b[0].length - a[0].length);
+  return directories.find(([dir]) => relativePath.startsWith(`${dir.replace(/\/$/, "")}/`))?.[1] ?? null;
+}
+async function listWorkingAdrPaths(repoRoot, config) {
+  const paths = /* @__PURE__ */ new Set();
+  async function visit(relativeDir) {
+    const abs = path.join(repoRoot, relativeDir);
+    if (!existsSync(abs)) return;
+    for (const entry of await readdir(abs, { withFileTypes: true })) {
+      const rel = path.posix.join(relativeDir, entry.name);
+      if (entry.isDirectory()) await visit(rel);
+      else if (entry.isFile() && entry.name.endsWith(".md") && entry.name !== "README.md") paths.add(rel);
     }
   }
-  return adrs.sort((a, b) => a.number - b.number);
+  for (const dir of /* @__PURE__ */ new Set([config.layout.acceptedDir, config.layout.proposedDir])) await visit(dir);
+  return [...paths].sort((a, b) => Buffer.from(a).compare(Buffer.from(b)));
 }
 async function readConfig(repoRoot) {
   const configPath = path.join(repoRoot, CONFIG_FILENAME);
@@ -495,7 +546,14 @@ async function readConfig(repoRoot) {
 function buildStandingReminder() {
   return "ADR governance is active. Record architectural decisions in ADR/CONTEXT when the three criteria apply.";
 }
-function buildFullInstruction(config, relevantAdrPaths) {
+function receiptInstruction(sessionId) {
+  const quoted = "'" + sessionId.replace(/'/g, `'"'"'`) + "'";
+  return [
+    "Record the actual outcome with turn-close; add --outcome docs-updated, or --outcome no-change --reason <reason-code> to:",
+    `node .adr-governance/bin/cli.mjs turn-close --session-id ${quoted}`
+  ].join("\n");
+}
+function buildFullInstruction(config, relevantAdrPaths, sessionId) {
   const paths = relevantAdrPaths.length > 0 ? relevantAdrPaths.map((p) => `- ${p}`).join("\n") : "- (none matched)";
   return [
     "ADR governance: possible or likely architectural impact detected.",
@@ -514,12 +572,15 @@ function buildFullInstruction(config, relevantAdrPaths) {
     paths,
     "",
     "Before finishing, update ADR/CONTEXT or explicitly record a no-ADR reason via turn-close when no ADR is required.",
-    "The after-turn hook may request one audit follow-up but never records a no-ADR reason on your behalf."
+    "The after-turn hook may request one audit follow-up but never records a no-ADR reason on your behalf.",
+    ...sessionId ? ["", receiptInstruction(sessionId)] : []
   ].join("\n");
 }
-function buildHookContext(config, risk, signals, relevantAdrPaths, degradationReason) {
+function buildHookContext(config, risk, signals, relevantAdrPaths, degradationReason, sessionId) {
   const standingReminder = buildStandingReminder();
-  let fullInstruction = risk === "none" ? standingReminder : buildFullInstruction(config, relevantAdrPaths);
+  let fullInstruction = risk === "none" ? standingReminder + (sessionId ? `
+
+${receiptInstruction(sessionId)}` : "") : buildFullInstruction(config, relevantAdrPaths, sessionId);
   if (degradationReason) {
     const label = degradationReason === "git-unavailable" ? "unavailable" : degradationReason;
     fullInstruction += `
@@ -538,7 +599,10 @@ The CI decision gate remains authoritative.`;
 }
 var AUDIT_FOLLOWUP_MESSAGE = "ADR audit: this turn may have architectural impact but no ADR/CONTEXT update or no-ADR reason was recorded. Read `.agents/skills/managing-adrs/SKILL.md` and either document the decision or record a reason code.";
 function isAuditFollowUpPrompt(prompt) {
-  return prompt.trim() === AUDIT_FOLLOWUP_MESSAGE;
+  const trimmed = prompt.trim();
+  return trimmed === AUDIT_FOLLOWUP_MESSAGE || trimmed.startsWith(`${AUDIT_FOLLOWUP_MESSAGE}
+
+Record the actual outcome with turn-close;`);
 }
 function decideAfterTurn(state, docsUpdated, config, conversationFollowUpCount = 0, repositoryChanged = false) {
   if (docsUpdated || state.receipt !== null) {
@@ -550,7 +614,9 @@ function decideAfterTurn(state, docsUpdated, config, conversationFollowUpCount =
     if (auditEnabled) {
       return {
         allowFinish: false,
-        followUpMessage: AUDIT_FOLLOWUP_MESSAGE
+        followUpMessage: `${AUDIT_FOLLOWUP_MESSAGE}
+
+${receiptInstruction(state.sessionId)}`
       };
     }
     return {
@@ -565,7 +631,9 @@ function decideAfterTurn(state, docsUpdated, config, conversationFollowUpCount =
     if (auditEnabled) {
       return {
         allowFinish: false,
-        followUpMessage: AUDIT_FOLLOWUP_MESSAGE
+        followUpMessage: `${AUDIT_FOLLOWUP_MESSAGE}
+
+${receiptInstruction(state.sessionId)}`
       };
     }
     return {
@@ -578,7 +646,7 @@ function decideAfterTurn(state, docsUpdated, config, conversationFollowUpCount =
 
 // src/core/fingerprint-build.ts
 import { createHash as createHash3 } from "node:crypto";
-import { existsSync as existsSync2 } from "node:fs";
+import { spawn } from "node:child_process";
 import { readFile as readFile2, stat as stat2 } from "node:fs/promises";
 import path2 from "node:path";
 init_numbering();
@@ -586,9 +654,9 @@ var MAX_FINGERPRINT_FILES = 500;
 var MAX_FINGERPRINT_BYTES = 1024 * 1024;
 async function runGit(repoRoot, args) {
   try {
-    const { execFile: execFile2 } = await import("node:child_process");
-    const { promisify: promisify2 } = await import("node:util");
-    const exec = promisify2(execFile2);
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const exec = promisify(execFile);
     const { stdout } = await exec("git", args, {
       cwd: repoRoot,
       maxBuffer: MAX_FINGERPRINT_BYTES
@@ -637,87 +705,49 @@ async function hashUntrackedFiles(repoRoot, status) {
   }
   return { hash: sha256(hashes.join("\n")), mode: "content" };
 }
+async function hashGitDiff(repoRoot, head) {
+  return new Promise((resolve) => {
+    const hash = createHash3("sha256").update(`${head}
+`);
+    const child = spawn("git", ["diff", "--no-ext-diff", "--binary", "HEAD"], {
+      cwd: repoRoot,
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+    child.stdout.on("data", (chunk) => hash.update(chunk));
+    child.on("error", () => resolve(null));
+    child.on("close", (code) => resolve(code === 0 ? hash : null));
+  });
+}
 async function observeRepositoryState(repoRoot) {
-  const [status, head, diff] = await Promise.all([
+  const [status, head] = await Promise.all([
     runGit(repoRoot, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]),
-    runGit(repoRoot, ["rev-parse", "HEAD"]),
-    runGit(repoRoot, ["diff", "--no-ext-diff", "--binary", "HEAD"])
+    runGit(repoRoot, ["rev-parse", "HEAD"])
   ]);
-  if (status === null || head === null || diff === null) return null;
-  const untracked = await hashUntrackedFiles(repoRoot, status);
-  if (untracked === null) return null;
+  if (status === null || head === null) return null;
+  const [untracked, diffHash] = await Promise.all([
+    hashUntrackedFiles(repoRoot, status),
+    hashGitDiff(repoRoot, head)
+  ]);
+  if (untracked === null || diffHash === null) return null;
   return {
     gitStatusHash: createHash3("sha256").update(status).digest("hex"),
-    repositoryStateHash: sha256(`${head}
-${diff}
-${untracked.hash}`),
+    repositoryStateHash: diffHash.update(`
+${untracked.hash}`).digest("hex"),
     collectionMode: untracked.mode,
     degradationReason: untracked.reason
   };
 }
-async function hashWatchFile(repoRoot, rel) {
-  const abs = path2.join(repoRoot, rel);
-  if (!existsSync2(abs)) return null;
-  try {
-    const s = await stat2(abs);
-    if (!s.isFile()) return null;
-    const content = await readFile2(abs, "utf8");
-    return sha256(content);
-  } catch {
-    return null;
-  }
-}
-async function readWatchPathsGitStatusHash(repoRoot, watchPaths) {
-  if (watchPaths.length === 0) return sha256("");
-  try {
-    const { execFile: execFile2 } = await import("node:child_process");
-    const { promisify: promisify2 } = await import("node:util");
-    const exec = promisify2(execFile2);
-    const { stdout } = await exec("git", ["status", "--porcelain"], { cwd: repoRoot });
-    const matchingLines = stdout.split("\n").filter((line) => line.length > 3).filter((line) => {
-      const file = (line.slice(3).trim().split(" -> ").pop() ?? "").trim();
-      return watchPaths.some(
-        (watchPath) => file === watchPath || file.startsWith(`${watchPath}/`) || watchPath.startsWith(`${file}/`)
-      );
-    });
-    return sha256(matchingLines.join("\n"));
-  } catch {
-    return sha256("");
-  }
-}
-async function hashOverflowWatchPaths(repoRoot, overflowPaths) {
-  const parts = [];
-  for (const rel of overflowPaths) {
-    const hash = await hashWatchFile(repoRoot, rel);
-    if (hash) parts.push(`${rel}:${hash}`);
-  }
-  return sha256(parts.join("\n"));
-}
-async function buildRepositoryFingerprint(repoRoot, trackedRelativePaths) {
-  const watchPaths = trackedRelativePaths.filter(isWatchPath);
-  const truncated = watchPaths.length > MAX_FINGERPRINT_FILES;
-  const selected = truncated ? watchPaths.slice(0, MAX_FINGERPRINT_FILES) : watchPaths;
-  const overflowPaths = truncated ? watchPaths.slice(MAX_FINGERPRINT_FILES) : [];
-  const contentHashes = {};
-  for (const rel of selected) {
-    const hash = await hashWatchFile(repoRoot, rel);
-    if (hash) contentHashes[rel] = hash;
-  }
+async function buildAuditRepositoryFingerprint(repoRoot) {
   const observation = await observeRepositoryState(repoRoot);
-  const gitStatusHash = observation?.gitStatusHash ?? sha256("");
-  const watchGitStatusHash = await readWatchPathsGitStatusHash(repoRoot, watchPaths);
-  const overflowWatchHash = await hashOverflowWatchPaths(repoRoot, overflowPaths);
-  const collectionMode = observation?.collectionMode ?? "unavailable";
-  const degradationReason = observation === null ? "git-unavailable" : observation.degradationReason;
   return {
-    paths: truncated ? watchPaths : selected,
-    gitStatusHash,
-    watchGitStatusHash,
-    overflowWatchHash,
-    contentHashes,
+    paths: [],
+    contentHashes: {},
+    watchGitStatusHash: sha256(""),
+    overflowWatchHash: sha256(""),
+    gitStatusHash: observation?.gitStatusHash ?? sha256(""),
     repositoryStateHash: observation?.repositoryStateHash,
-    collectionMode,
-    degradationReason
+    collectionMode: observation?.collectionMode ?? "unavailable",
+    degradationReason: observation === null ? "git-unavailable" : observation.degradationReason
   };
 }
 function degradationWarningMessage(reason) {
@@ -741,37 +771,16 @@ function repositoryFingerprintChanged(before, after) {
 
 // src/core/decision-corpus.ts
 init_numbering();
-import { existsSync as existsSync3 } from "node:fs";
+import { existsSync as existsSync2 } from "node:fs";
 import { readFile as readFile3 } from "node:fs/promises";
 import path3 from "node:path";
 function normalizeRepoPath(relativePath) {
   return relativePath.split(path3.sep).join("/");
 }
-function isAdrMarkdown(relativePath) {
-  const name = relativePath.split("/").pop() ?? relativePath;
-  return name.endsWith(".md") && name !== "README.md";
-}
-function corpusDirectories(config) {
-  const dirs = [config.layout.acceptedDir];
-  if (config.layout.mode === "split" || config.layout.acceptedDir !== config.layout.proposedDir) {
-    dirs.push(config.layout.proposedDir);
-  }
-  return dirs;
-}
 async function listWorkingCorpusPaths(repoRoot, config) {
-  const paths = [];
-  const { readdir: readdir4 } = await import("node:fs/promises");
-  for (const dir of corpusDirectories(config)) {
-    const abs = path3.join(repoRoot, dir);
-    if (!existsSync3(abs)) continue;
-    const names = await readdir4(abs);
-    for (const name of names.sort()) {
-      if (!isAdrMarkdown(name)) continue;
-      paths.push(normalizeRepoPath(path3.join(dir, name)));
-    }
-  }
+  const paths = await listWorkingAdrPaths(repoRoot, config);
   for (const file of [config.layout.contextFile, config.layout.contextMapFile]) {
-    if (existsSync3(path3.join(repoRoot, file))) {
+    if (existsSync2(path3.join(repoRoot, file))) {
       paths.push(normalizeRepoPath(file));
     }
   }
@@ -790,18 +799,18 @@ async function buildWorkingDecisionCorpus(repoRoot, config) {
   const paths = await listWorkingCorpusPaths(repoRoot, config);
   return collectCorpusEntries(paths, async (relativePath) => {
     const abs = path3.join(repoRoot, relativePath);
-    if (!existsSync3(abs)) return null;
-    return readFile3(abs, "utf8");
+    if (!existsSync2(abs)) return null;
+    return (await readFile3(abs, "utf8")).replace(/\r\n/g, "\n");
   });
 }
 function hashDecisionCorpus(entries) {
-  const sorted = [...entries].sort((a, b) => a.path.localeCompare(b.path));
+  const sorted = [...entries].sort((a, b) => Buffer.from(a.path).compare(Buffer.from(b.path)));
   const payload = sorted.map((e) => `${e.path}\0${e.contentHash}
 `).join("");
   return `sha256:${sha256(payload)}`;
 }
 function snapshotDecisionCorpus(entries) {
-  const sorted = [...entries].sort((a, b) => a.path.localeCompare(b.path));
+  const sorted = [...entries].sort((a, b) => Buffer.from(a.path).compare(Buffer.from(b.path)));
   return {
     hash: hashDecisionCorpus(sorted),
     entries: sorted
@@ -821,13 +830,13 @@ function changedDecisionCorpusPaths(before, after) {
 }
 
 // src/core/locks.ts
-import { mkdir, open, readFile as readFile4, readdir as readdir2, rm, lstat, unlink, writeFile } from "node:fs/promises";
-import { existsSync as existsSync4 } from "node:fs";
+import { mkdir, readFile as readFile4, readdir as readdir2, rename, rm, rmdir, lstat, unlink, writeFile } from "node:fs/promises";
+import { existsSync as existsSync3 } from "node:fs";
 import path4 from "node:path";
 var LOCK_STALE_MS = 10 * 60 * 1e3;
 async function pruneOldState(repoRoot, maxAgeDays = 7) {
   const stateDir = path4.join(repoRoot, ".adr-governance/state");
-  if (!existsSync4(stateDir)) return;
+  if (!existsSync3(stateDir)) return;
   const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1e3;
   const entries = await readdir2(stateDir, { withFileTypes: true });
   for (const entry of entries) {
@@ -849,19 +858,6 @@ async function pruneStateEntry(entryPath, cutoff) {
   }
 }
 
-// src/cli/git.ts
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-var execFileAsync = promisify(execFile);
-async function gitLsFiles(repoRoot) {
-  try {
-    const { stdout } = await execFileAsync("git", ["ls-files"], { cwd: repoRoot });
-    return stdout.split("\n").filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
 // src/hooks/audit-chain.ts
 import { mkdir as mkdir3, readFile as readFile6, unlink as unlink2, writeFile as writeFile3 } from "node:fs/promises";
 import path6 from "node:path";
@@ -869,12 +865,14 @@ import path6 from "node:path";
 // src/hooks/turn-pointer.ts
 import { mkdir as mkdir2, readdir as readdir3, readFile as readFile5, writeFile as writeFile2 } from "node:fs/promises";
 import path5 from "node:path";
+import { createHash as createHash4 } from "node:crypto";
 var CURRENT_TURN_DIR = ".adr-governance/state/current-turn";
 var LEGACY_CURRENT_TURN_POINTER = ".adr-governance/state/current-turn.json";
 function sanitizeSessionId(sessionId) {
   const trimmed = sessionId.trim();
   if (!trimmed) return "default";
-  return trimmed.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 128);
+  if (/^[a-zA-Z0-9._-]{1,128}$/.test(trimmed)) return trimmed;
+  return `~${createHash4("sha256").update(trimmed).digest("hex")}`;
 }
 function turnPointerRelPath(sessionId) {
   return path5.join(CURRENT_TURN_DIR, `${sanitizeSessionId(sessionId)}.json`);
@@ -887,7 +885,11 @@ async function writeTurnPointer(repoRoot, sessionId, pointer) {
 async function loadTurnStateForSession(repoRoot, sessionId) {
   const trimmed = sessionId?.trim();
   if (trimmed) {
-    return readPointerTurnState(repoRoot, turnPointerRelPath(trimmed));
+    const state = await readPointerTurnState(repoRoot, turnPointerRelPath(trimmed));
+    if (state && (state.sessionId === trimmed || state.conversationId === trimmed)) return state;
+    const legacyName = trimmed.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 128);
+    const legacy = await readPointerTurnState(repoRoot, path5.join(CURRENT_TURN_DIR, `${legacyName}.json`));
+    return legacy && (legacy.sessionId === trimmed || legacy.conversationId === trimmed) ? legacy : null;
   }
   const fromLegacy = await readPointerTurnState(repoRoot, LEGACY_CURRENT_TURN_POINTER);
   if (fromLegacy) return fromLegacy;
@@ -980,21 +982,21 @@ async function runBeforeTurn(input) {
   const adrs = await loadAllAdrs(repoRoot, config);
   const assessed = isAuditFollowUp ? { risk: "none", signals: ["audit-follow-up"] } : assessPromptRisk(input.prompt, config);
   const relevant = isAuditFollowUp ? [] : rankRelevantAdrs(input.prompt, adrs);
-  const tracked = await gitLsFiles(repoRoot);
-  const beforeFingerprint = await buildRepositoryFingerprint(repoRoot, tracked);
+  const beforeFingerprint = await buildAuditRepositoryFingerprint(repoRoot);
   const degradationReason = beforeFingerprint.degradationReason;
   const shouldWarnDegradation = degradationReason !== void 0;
+  const sessionId = input.sessionId?.trim() || (input.hookPayload ? resolveHookTurnKey(input.hookPayload) : randomUUID2());
   const hookContext = buildHookContext(
     config,
     assessed.risk,
     assessed.signals,
     relevant.map((a) => a.path),
-    shouldWarnDegradation ? degradationReason : void 0
+    shouldWarnDegradation ? degradationReason : void 0,
+    sessionId
   );
   const stateDir = path7.join(repoRoot, STATE_DIR, "turns");
   await mkdir4(stateDir, { recursive: true });
   const turnId = randomUUID2();
-  const sessionId = input.sessionId?.trim() || (input.hookPayload ? resolveHookTurnKey(input.hookPayload) : randomUUID2());
   const beforeDecisionCorpus = snapshotDecisionCorpus(
     await buildWorkingDecisionCorpus(repoRoot, config)
   );
@@ -1085,7 +1087,7 @@ async function runAfterTurn(input) {
     warning = "Legacy turn state without decision corpus snapshot; docs update not verified (fail-open)";
     docsUpdated = false;
   }
-  const afterFingerprint = await buildRepositoryFingerprint(repoRoot, await gitLsFiles(repoRoot));
+  const afterFingerprint = await buildAuditRepositoryFingerprint(repoRoot);
   const repositoryChanged = repositoryFingerprintChanged(state.beforeFingerprint, afterFingerprint);
   const decision = decideAfterTurn(
     state,

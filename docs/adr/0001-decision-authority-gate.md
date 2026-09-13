@@ -23,6 +23,7 @@ Adopt a **Decision Authority Gate** with provider-neutral `DecisionEvidence`, `a
 5. **CI is fail-closed** when base ref, evidence, or corpus cannot be validated.
 6. **Exact change-set freshness:** ADR-0002 extends evidence freshness from the
    base decision corpus to the exact repository snapshot being attested.
+7. **Trusted evaluation:** base-dependent checks use the immutable base policy and generated-artifact registrations. CI executes the base verifier outside the PR checkout. A PR cannot grant itself exemptions by editing its config, manifest or verifier bundle. The CI workflow and its selected base remain part of the repository's review/protection boundary.
 
 ### Rejected alternatives
 

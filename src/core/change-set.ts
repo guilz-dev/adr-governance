@@ -5,6 +5,9 @@ import path from 'node:path'
 import {
   listSnapshotChangedPaths,
   readBlobAtRef,
+  readCleanWorktreeBlob,
+  readGitBoolean,
+  readIndexMode,
   readModeAtRef,
   resolveCommit,
   resolveMergeBase,
@@ -83,8 +86,16 @@ async function readCurrentSide(
     return null
   }
 
-  const mode = (info.mode & 0o111) !== 0 ? '100755' : '100644'
-  const content = await readFile(abs)
+  const indexMode = await readIndexMode(repoRoot, relativePath)
+  // With symlink support disabled Git checks out a link as its plain target text.
+  if (indexMode === '120000' && !(await readGitBoolean(repoRoot, 'core.symlinks', true))) {
+    return { mode: '120000', contentHash: hashContent(await readFile(abs)) }
+  }
+  const trustFileMode = await readGitBoolean(repoRoot, 'core.filemode', true)
+  const mode = trustFileMode
+    ? ((info.mode & 0o100) !== 0 ? '100755' : '100644')
+    : (indexMode === '100755' ? '100755' : '100644')
+  const content = await readCleanWorktreeBlob(repoRoot, relativePath)
   return { mode, contentHash: hashContent(content) }
 }
 

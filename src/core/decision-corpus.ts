@@ -4,6 +4,7 @@ import path from 'node:path'
 
 import type { AdrConfig } from './types.js'
 import { sha256 } from './numbering.js'
+import { listWorkingAdrPaths } from './repository-state.js'
 
 export type DecisionCorpusEntry = { path: string; contentHash: string }
 
@@ -29,17 +30,7 @@ function corpusPathCandidates(config: AdrConfig): string[] {
 }
 
 async function listWorkingCorpusPaths(repoRoot: string, config: AdrConfig): Promise<string[]> {
-  const paths: string[] = []
-  const { readdir } = await import('node:fs/promises')
-  for (const dir of corpusDirectories(config)) {
-    const abs = path.join(repoRoot, dir)
-    if (!existsSync(abs)) continue
-    const names = await readdir(abs)
-    for (const name of names.sort()) {
-      if (!isAdrMarkdown(name)) continue
-      paths.push(normalizeRepoPath(path.join(dir, name)))
-    }
-  }
+  const paths = await listWorkingAdrPaths(repoRoot, config)
 
   for (const file of [config.layout.contextFile, config.layout.contextMapFile]) {
     if (existsSync(path.join(repoRoot, file))) {
@@ -54,12 +45,12 @@ async function listRefCorpusPaths(repoRoot: string, ref: string, config: AdrConf
   const { execFile } = await import('node:child_process')
   const { promisify } = await import('node:util')
   const exec = promisify(execFile)
-  const { stdout } = await exec('git', ['ls-tree', '-r', '--name-only', ref], { cwd: repoRoot })
+  const { stdout } = await exec('git', ['ls-tree', '-r', '--name-only', '-z', ref], { cwd: repoRoot, maxBuffer: 10 * 1024 * 1024 })
 
   const prefixes = corpusPathCandidates(config)
   const paths: string[] = []
 
-  for (const file of stdout.split('\n').filter(Boolean)) {
+  for (const file of stdout.split('\0').filter(Boolean)) {
     const normalized = normalizeRepoPath(file)
     if (prefixes.includes(normalized)) {
       paths.push(normalized)
@@ -98,7 +89,7 @@ export async function buildWorkingDecisionCorpus(
   return collectCorpusEntries(paths, async (relativePath) => {
     const abs = path.join(repoRoot, relativePath)
     if (!existsSync(abs)) return null
-    return readFile(abs, 'utf8')
+    return (await readFile(abs, 'utf8')).replace(/\r\n/g, '\n')
   })
 }
 
@@ -128,7 +119,7 @@ export async function buildRefDecisionCorpus(
 }
 
 export function hashDecisionCorpus(entries: DecisionCorpusEntry[]): string {
-  const sorted = [...entries].sort((a, b) => a.path.localeCompare(b.path))
+  const sorted = [...entries].sort((a, b) => Buffer.from(a.path).compare(Buffer.from(b.path)))
   const payload = sorted.map((e) => `${e.path}\0${e.contentHash}\n`).join('')
   return `sha256:${sha256(payload)}`
 }
@@ -139,7 +130,7 @@ export type DecisionCorpusSnapshot = {
 }
 
 export function snapshotDecisionCorpus(entries: DecisionCorpusEntry[]): DecisionCorpusSnapshot {
-  const sorted = [...entries].sort((a, b) => a.path.localeCompare(b.path))
+  const sorted = [...entries].sort((a, b) => Buffer.from(a.path).compare(Buffer.from(b.path)))
   return {
     hash: hashDecisionCorpus(sorted) as `sha256:${string}`,
     entries: sorted,

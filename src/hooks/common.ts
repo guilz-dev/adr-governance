@@ -13,7 +13,16 @@ export function buildStandingReminder(): string {
   return 'ADR governance is active. Record architectural decisions in ADR/CONTEXT when the three criteria apply.'
 }
 
-export function buildFullInstruction(config: AdrConfig, relevantAdrPaths: string[]): string {
+function receiptInstruction(sessionId: string): string {
+  // POSIX shell quoting keeps runtime IDs literal, including quotes and substitutions.
+  const quoted = "'" + sessionId.replace(/'/g, "'\"'\"'") + "'"
+  return [
+    'Record the actual outcome with turn-close; add --outcome docs-updated, or --outcome no-change --reason <reason-code> to:',
+    `node .adr-governance/bin/cli.mjs turn-close --session-id ${quoted}`,
+  ].join('\n')
+}
+
+export function buildFullInstruction(config: AdrConfig, relevantAdrPaths: string[], sessionId?: string): string {
   const paths =
     relevantAdrPaths.length > 0
       ? relevantAdrPaths.map((p) => `- ${p}`).join('\n')
@@ -36,6 +45,7 @@ export function buildFullInstruction(config: AdrConfig, relevantAdrPaths: string
     '',
     'Before finishing, update ADR/CONTEXT or explicitly record a no-ADR reason via turn-close when no ADR is required.',
     'The after-turn hook may request one audit follow-up but never records a no-ADR reason on your behalf.',
+    ...(sessionId ? ['', receiptInstruction(sessionId)] : []),
   ].join('\n')
 }
 
@@ -45,10 +55,13 @@ export function buildHookContext(
   signals: string[],
   relevantAdrPaths: string[],
   degradationReason?: 'untracked-count' | 'untracked-size' | 'git-unavailable',
+  sessionId?: string,
 ): HookContext {
   const standingReminder = buildStandingReminder()
   let fullInstruction =
-    risk === 'none' ? standingReminder : buildFullInstruction(config, relevantAdrPaths)
+    risk === 'none'
+      ? standingReminder + (sessionId ? `\n\n${receiptInstruction(sessionId)}` : '')
+      : buildFullInstruction(config, relevantAdrPaths, sessionId)
 
   if (degradationReason) {
     const label = degradationReason === 'git-unavailable' ? 'unavailable' : degradationReason
@@ -75,7 +88,9 @@ export const AUDIT_FOLLOWUP_MESSAGE =
   'ADR audit: this turn may have architectural impact but no ADR/CONTEXT update or no-ADR reason was recorded. Read `.agents/skills/managing-adrs/SKILL.md` and either document the decision or record a reason code.'
 
 export function isAuditFollowUpPrompt(prompt: string): boolean {
-  return prompt.trim() === AUDIT_FOLLOWUP_MESSAGE
+  const trimmed = prompt.trim()
+  return trimmed === AUDIT_FOLLOWUP_MESSAGE ||
+    trimmed.startsWith(`${AUDIT_FOLLOWUP_MESSAGE}\n\nRecord the actual outcome with turn-close;`)
 }
 
 export function decideAfterTurn(
@@ -98,7 +113,7 @@ export function decideAfterTurn(
     if (auditEnabled) {
       return {
         allowFinish: false,
-        followUpMessage: AUDIT_FOLLOWUP_MESSAGE,
+        followUpMessage: `${AUDIT_FOLLOWUP_MESSAGE}\n\n${receiptInstruction(state.sessionId)}`,
       }
     }
     return {
@@ -115,7 +130,7 @@ export function decideAfterTurn(
     if (auditEnabled) {
       return {
         allowFinish: false,
-        followUpMessage: AUDIT_FOLLOWUP_MESSAGE,
+        followUpMessage: `${AUDIT_FOLLOWUP_MESSAGE}\n\n${receiptInstruction(state.sessionId)}`,
       }
     }
     return {

@@ -4,6 +4,8 @@ Design spec: [`docs/specs/adr-governance-design.md`](./specs/adr-governance-desi
 
 **Current release:** v0.2.0
 
+Reliability fixes after the v0.2.0 release are tracked in [the finding disposition and upgrade notes](./reliability-fixes-2026-09-13.md). Existing workflows need the trusted-base runner and `edited` trigger update; open PRs need re-attestation. The v0.2.x v1-evidence compatibility window remains unchanged.
+
 ## v0.2.0 reliability release
 
 | Area | Status |

@@ -109,7 +109,7 @@ describe('nested hook merge', () => {
     const { merged, conflict } = mergeNestedHookGroups(existing, managed, MANAGED_MARKER)
     expect(conflict).toBeUndefined()
     expect(merged).toHaveLength(1)
-    expect((merged[0] as { hooks: unknown[] }).hooks).toHaveLength(2)
+    expect((merged[0] as { hooks: unknown[] }).hooks).toEqual(managed)
   })
 })
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { existsSync } from 'node:fs'
 
 function findRepoRoot(start) {
@@ -20,7 +20,7 @@ function findRepoRoot(start) {
 
 const phase = process.argv[2] ?? 'before-turn'
 const repoRoot =
-  process.env.CLAUDE_PROJECT_DIR ??
+  (process.env.CLAUDE_PROJECT_DIR ? findRepoRoot(process.env.CLAUDE_PROJECT_DIR) : null) ??
   findRepoRoot(path.dirname(fileURLToPath(import.meta.url))) ??
   findRepoRoot(process.cwd())
 const failOpenOutput = { continue: true }
@@ -30,16 +30,21 @@ if (!repoRoot) {
   process.exit(0)
 }
 
-const chunks = []
-for await (const chunk of process.stdin) chunks.push(chunk)
-const stdin = Buffer.concat(chunks)
-const { runHookShim } = await import(
-  path.join(repoRoot, '.adr-governance/bin/hook-shim-runner.mjs')
-)
-await runHookShim({
-  runtime: 'claude',
-  phase,
-  repoRoot,
-  stdin,
-  failOpenOutput,
-})
+try {
+  const chunks = []
+  for await (const chunk of process.stdin) chunks.push(chunk)
+  const stdin = Buffer.concat(chunks)
+  const { runHookShim } = await import(
+    pathToFileURL(path.join(repoRoot, '.adr-governance/bin/hook-shim-runner.mjs')).href
+  )
+  await runHookShim({
+    runtime: 'claude',
+    phase,
+    repoRoot,
+    stdin,
+    failOpenOutput,
+  })
+} catch {
+  process.stdout.write(`${JSON.stringify(failOpenOutput)}\n`)
+  process.exitCode = 0
+}

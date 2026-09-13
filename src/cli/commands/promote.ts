@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import type { AdrConfig } from '../../core/types.js'
-import { buildAdrContent, canPromoteToAccepted } from '../../core/lifecycle.js'
+import { buildAdrContent, canPromoteToAccepted, parseFrontmatter, updateFrontmatter } from '../../core/lifecycle.js'
 import { acquireLock, atomicWriteFile } from '../../core/locks.js'
 import { listAdrFiles } from '../../core/repository-state.js'
 import { parseAdrFromPath } from '../../core/validation.js'
@@ -40,15 +40,14 @@ export async function runPromote(options: {
     if (!check.ok) throw new Error(check.reason ?? 'Cannot promote')
 
     const today = new Date().toISOString().slice(0, 10)
-    const newContent = buildAdrContent(
-      {
-        status: 'accepted',
-        date: today,
-        acceptance: options.approval ?? 'automatic',
-      },
-      parsed.title,
-      parsed.body,
-    )
+    const updates = {
+      status: 'accepted' as const,
+      date: today,
+      acceptance: options.approval ?? 'automatic',
+    }
+    const newContent = parseFrontmatter(content).frontmatter
+      ? updateFrontmatter(content, updates)
+      : buildAdrContent({ ...parsed.frontmatter, ...updates }, parsed.title, parsed.body)
 
     if (options.config.layout.mode === 'split') {
       const destRel = path.join(options.config.layout.acceptedDir, matchFile)

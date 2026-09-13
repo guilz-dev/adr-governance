@@ -1,42 +1,12 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
+import { updateFrontmatter } from '../../core/lifecycle.js'
 import type { AdrConfig } from '../../core/types.js'
 import { acquireLock, atomicWriteFile } from '../../core/locks.js'
 import { listAdrFiles, loadAllAdrs } from '../../core/repository-state.js'
 import { parseAdrFromPath } from '../../core/validation.js'
 import { validateAdrTransitions } from '../../core/adr-transitions.js'
-
-const RAW_FRONTMATTER_RE = /^(---\r?\n)([\s\S]*?)(\r?\n---)([\s\S]*)$/
-
-function updateFrontmatter(content: string, updates: Record<string, string>): string {
-  const match = RAW_FRONTMATTER_RE.exec(content)
-  if (!match) throw new Error('Could not update ADR frontmatter')
-
-  const opening = match[1] ?? ''
-  const yaml = match[2] ?? ''
-  const closing = match[3] ?? ''
-  const body = match[4] ?? ''
-  const newline = yaml.includes('\r\n') ? '\r\n' : '\n'
-  const pending = new Map(Object.entries(updates))
-  const lines = yaml.split(/\r?\n/).map((line) => {
-    const field = /^(\s*)([^:\s][^:]*?)\s*:/.exec(line)
-    if (!field) return line
-
-    const key = field[2]?.trim()
-    if (!key || !pending.has(key)) return line
-
-    const value = pending.get(key)
-    pending.delete(key)
-    return `${field[1] ?? ''}${key}: ${value}`
-  })
-
-  for (const [key, value] of pending) {
-    lines.push(`${key}: ${value}`)
-  }
-
-  return `${opening}${lines.join(newline)}${closing}${body}`
-}
 
 export async function runSupersede(options: {
   repoRoot: string

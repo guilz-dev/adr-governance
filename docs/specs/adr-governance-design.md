@@ -606,7 +606,7 @@ Codex CLIはsession cwdがsubdirectoryの場合に備え、POSIX側はGit root�
             "type": "command",
             "command": "node \"$(git rev-parse --show-toplevel)/.codex/hooks/adr-governance.mjs\" before-turn",
             "commandWindows": "powershell.exe -NoProfile -Command \"$r=(git rev-parse --show-toplevel); node \\\"$r/.codex/hooks/adr-governance.mjs\\\" before-turn\"",
-            "timeout": 2
+            "timeout": 3
           }
         ]
       }
@@ -618,7 +618,7 @@ Codex CLIはsession cwdがsubdirectoryの場合に備え、POSIX側はGit root�
             "type": "command",
             "command": "node \"$(git rev-parse --show-toplevel)/.codex/hooks/adr-governance.mjs\" after-turn",
             "commandWindows": "powershell.exe -NoProfile -Command \"$r=(git rev-parse --show-toplevel); node \\\"$r/.codex/hooks/adr-governance.mjs\\\" after-turn\"",
-            "timeout": 2
+            "timeout": 3
           }
         ]
       }
@@ -639,7 +639,7 @@ Gemini CLIはproject root環境変数を使う。
             "name": "adr-governance-before-turn",
             "type": "command",
             "command": "node \"$GEMINI_PROJECT_DIR/.gemini/hooks/adr-governance.mjs\" before-turn",
-            "timeout": 2000
+            "timeout": 3000
           }
         ]
       }
@@ -651,7 +651,7 @@ Gemini CLIはproject root環境変数を使う。
             "name": "adr-governance-after-turn",
             "type": "command",
             "command": "node \"$GEMINI_PROJECT_DIR/.gemini/hooks/adr-governance.mjs\" after-turn",
-            "timeout": 2000
+            "timeout": 3000
           }
         ]
       }
@@ -690,7 +690,7 @@ node .adr-governance/bin/cli.mjs sync --from <release-or-path>
 ```
 
 - Skill、reference、bundle、runtime shim、manifestの管理対象を更新する。
-- ユーザー管理ファイルの未知fieldと既存hookを保持する。
+- ユーザー管理ファイルの未知fieldと既存hookを保持する。`adr.config.json` は現在の内容をそのまま保持し、runtime登録JSONもファイル全体のchecksum管理から除外する。旧manifestのこれらのhashは無視し、managed entryの構造検証とmergeは継続する。
 - 管理entryが手編集されていた場合は上書きせずconflictを返す。
 - `--force` は設けない。競合は明示的に解消してから再実行する。
 
@@ -711,13 +711,13 @@ node .adr-governance/bin/cli.mjs check [--base <git-ref>] [--evidence <json-path
 - runtime hook entryの存在
 - manifest checksumと生成物drift
 
-`--base` 指定時はbase treeとworking treeを比較し、番号競合、status lifecycle、変更path、changed proposed ADR、base decision corpus hash、DecisionEvidenceを検証する。ADR/CONTEXTおよびmanifest管理の生成済みガバナンスファイル以外の変更には、accepted ADR参照または明示的no-ADR outcomeのどちらか一つを要求する。
+`--base` 指定時はbase treeとworking treeを比較し、番号競合、status lifecycle、変更path、changed proposed ADR、base decision corpus hash、DecisionEvidenceを検証する。ADR/CONTEXTおよびbase manifest管理の生成済みガバナンスファイル以外の変更には、accepted ADR参照または明示的no-ADR outcomeのどちらか一つを要求する。設定、runtime登録JSON、実行用bundle・shimの変更は証跡を必要とする。mode、exemptPaths、layout、人間承認metadata要件はimmutable baseの設定を使用し、headの設定・manifest変更で免除を拡張しない。baseに設定がない初回導入はstructural checkと人間のreviewで先に確立する。
 
 `--evidence` はprovider-neutralなJSON file、`--github-event` はGitHub event fileの `pull_request.body` にある単一の fenced `adr-governance` blockを読む。両flagの同時指定はusage errorとし、GitHub APIまたはその他のnetwork callは行わない。
 
-enforce modeではbase ref、証跡、参照ADR、decision corpus、比較処理のいずれかを読めない場合にfail-closedとする。warn modeはchange-gate固有findingだけをwarningへ下げ、従来の構造検証errorはerrorのまま維持する。
+enforce modeではbase ref、証跡、参照ADR、decision corpus、比較処理のいずれかを読めない場合にfail-closedとする。warn modeはchange-gate固有findingと比較取得失敗をwarningへ下げ、従来の構造検証errorはerrorのまま維持する。baseの設定自体が読めない場合はtrusted modeを確定できないため `base-policy-unavailable` errorとする。
 
-主なvalidation codeは `base-ref-unavailable`、`decision-evidence-required`、`decision-evidence-invalid`、`decision-evidence-legacy`、`decision-baseline-stale`、`decision-base-stale`、`decision-changeset-stale`、`decision-ref-not-accepted`、`decision-ref-stale`、`changed-proposal-unreviewed`、`invalid-status-transition`、`accepted-without-acceptance`、`proposed-with-acceptance` とする。
+主なvalidation codeは `base-policy-unavailable`、`human-acceptance-required`、`base-ref-unavailable`、`decision-evidence-required`、`decision-evidence-invalid`、`decision-evidence-legacy`、`decision-baseline-stale`、`decision-base-stale`、`decision-changeset-stale`、`decision-ref-not-accepted`、`decision-ref-stale`、`changed-proposal-unreviewed`、`invalid-status-transition`、`accepted-without-acceptance`、`proposed-with-acceptance` とする。
 
 #### DecisionEvidence v2
 
@@ -728,7 +728,7 @@ schemaVersion 2 は次のフィールドを持つ。
 - `changeSet.algorithm`: 常に `git-change-set-v1`
 - `changeSet.digest`: canonical changesetのSHA-256 digest
 
-`git-change-set-v1` は `git merge-base <baseCommit> HEAD` をcomparison baseとし、immutable base tipとHEADのthree-dot差分、index/worktree status、untracked filesの和集合から変更pathを列挙する。rename heuristicは使わず、旧pathのdeleteと新pathのaddとして表現する。stateディレクトリとgitignore対象fileは含めない。
+`git-change-set-v1` は `git merge-base <baseCommit> HEAD` をcomparison baseとし、immutable base tipとHEADのthree-dot差分、index/worktree status、untracked filesの和集合から変更pathを列挙する。rename heuristicは使わず、旧pathのdeleteと新pathのaddとして表現する。Gateの変更分類にも同じentriesを使用する。current contentはGit clean filterと改行変換を通したblob bytesをSHA-256でhashし、modeはGitのfilemode/symlink設定とindexを尊重する。stateディレクトリとgitignore対象fileは含めない。
 
 canonical payloadの1 entryは次のNUL区切り形式とする。
 
@@ -767,7 +767,7 @@ node .adr-governance/bin/cli.mjs promote ADR-0007 \
 - tracked fileの移動にはGit管理下であることを確認し、`git mv` を使う。
 - single layoutではpathを変えずfrontmatterだけ更新する。
 - `requireHumanAcceptance: true` の場合、`--approval human` とSkillが確認した明示承認が必要である。
-- CLI単体は会話上の人間本人性を証明しない。
+- CLI単体は会話上の人間本人性を証明しない。`check --base` はtrusted設定に従い、新規・変更されたaccepted ADRに `acceptance: human` を要求するが、これは本人認証を意味しない。
 
 ### 11.6 `supersede`
 
@@ -781,9 +781,12 @@ node .adr-governance/bin/cli.mjs supersede ADR-0002 --by ADR-0008
 
 ### 11.7 `turn-close`
 
+Hookが提示する実際の `--session-id` を使う。ID未指定または未知のIDで対応するturnが見つからない場合はerrorとし、孤立receiptを生成しない。legacy pointerの読込みは互換のため保持する。
+
 ```bash
 node .adr-governance/bin/cli.mjs turn-close \
   --outcome docs-updated|no-change \
+  --session-id <hookが提示したID> \
   [--reason <reason-code>]
 ```
 
@@ -876,7 +879,7 @@ fingerprintは監視対象fileの相対path、Git status、content hashから作
 
 - before-turn hook: 通常リポジトリでp95 300ms未満
 - after-turn hook: p95 500ms未満
-- hook timeout: 2秒（runtime shimは既定1500msのウォッチドッグ、設定可能範囲100〜1900ms）
+- hook timeout: Codex/Geminiの外側timeoutは3秒。runtime shimは既定1500ms、設定可能範囲100〜1900msで直ちにfail-openを出力し、起動・終了処理の余裕を外側予算に確保する。
 - hook failure: 通常作業はfail-openしwarningを出す。shimは子プロセスstdoutをbufferし、正常exit時のみ単一JSONを出力する
 - `check`: validation errorをfail-closedでCIへ返す
 
@@ -899,8 +902,8 @@ hookは外部network、LLM、package installを実行しない。
 
 ## 16. 並行実行
 
-- 同一worktreeでは `.adr-governance/state/locks/` のexclusive createで採番とpromotionを直列化する。
-- lockにはPID、開始時刻、commandを記録する。
+- 同一worktreeでは `.adr-governance/state/locks/` に、owner UUID付きmetadataを入れたdirectoryをatomic renameしてlockを公開する。採番とpromotionを各lock名で直列化し、解放・回収は観測したownerのfileだけを削除する。
+- lock directory内のowner fileにはPID、開始時刻、command、owner UUIDを記録する。旧JSON file形式もstale回収対象として読める。
 - 生存していないPIDかつ10分を超えたlockだけをstaleとして回収できる。
 - 別worktree間ではlockを共有しない。`check --base` で番号重複を検出する。
 - 重複解消で再採番できるのは未accepted ADRだけとする。accepted同士が衝突した場合は自動修正せず人間へ返す。
@@ -991,7 +994,7 @@ node .adr-governance/bin/cli.mjs check \
   --github-event "$GITHUB_EVENT_PATH"
 ```
 
-GitHub adapterはPR本文の単一 fenced `adr-governance` blockだけを読み、API callは行わない。protected branchへのpushでは、PR evidenceを要求しないstructural checkを別に実行する。
+GitHub adapterは証跡が必要な変更に限りPR本文の単一 fenced `adr-governance` blockを読み、API callは行わない。workflowは `opened, edited, synchronize, reopened` を購読し、immutable baseからbundleをrunner tempへ抽出して実行する。PR headのbundleへfallbackしない。workflow定義とbase選択はrepository protection/reviewの信頼境界に含む。protected branchへのpushでは、PR evidenceを要求しないstructural checkを別に実行する。
 
 `init` は既存CIがGitHub Actionsの場合だけworkflow追加候補とPR templateをplanへ含める。CI providerを検出できない場合はworkflowを生成せず、導入コマンドを結果へ表示する。明示baseを取得できないenforce checkは失敗する。
 

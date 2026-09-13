@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { NO_ADR_REASONS } from '../../core/types.js'
@@ -45,10 +45,9 @@ export async function runTurnClose(options: {
     return
   }
 
-  const stateDir = path.join(options.repoRoot, STATE_DIR, 'turns')
-  await mkdir(stateDir, { recursive: true })
-  await writeFile(
-    path.join(stateDir, `receipt-${Date.now()}.json`),
-    JSON.stringify({ receipt }, null, 2),
+  throw new Error(
+    options.sessionId?.trim()
+      ? 'No active turn found for this --session-id. Use the session ID from the current hook instructions.'
+      : '--session-id is required when there is no legacy current turn. Use the session ID from the current hook instructions.',
   )
 }

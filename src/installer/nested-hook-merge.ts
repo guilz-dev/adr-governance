@@ -7,21 +7,10 @@ export function isManagedEntry(entry: unknown, marker: string): boolean {
   return command.includes(marker) || name.includes('adr-governance')
 }
 
-function entryKey(entry: HookEntry): string {
-  return JSON.stringify(entry)
-}
-
-function appendUnique(entries: unknown[], toAdd: HookEntry[]): unknown[] {
-  const result = [...entries]
-  const keys = new Set(entries.map((e) => entryKey(e as HookEntry)))
-  for (const item of toAdd) {
-    const key = entryKey(item)
-    if (!keys.has(key)) {
-      result.push(item)
-      keys.add(key)
-    }
-  }
-  return result
+function replaceManaged(entries: HookEntry[], managed: HookEntry[], marker: string): HookEntry[] {
+  return entries.flatMap(entry => isManagedEntry(entry, marker)
+    ? managed.map(replacement => ({ ...entry, ...replacement }))
+    : [entry])
 }
 
 function countManaged(groups: unknown[], marker: string): number {
@@ -36,7 +25,7 @@ function countManaged(groups: unknown[], marker: string): number {
   return count
 }
 
-/** Preserve matcher wrappers; append managed hooks without flattening existing groups. */
+/** Preserve user hooks and wrappers while refreshing the single managed registration. */
 export function mergeNestedHookGroups(
   current: unknown[],
   managedEntries: HookEntry[],
@@ -61,7 +50,7 @@ export function mergeNestedHookGroups(
       updated = true
       return {
         ...group,
-        hooks: appendUnique(group.hooks, managedEntries) as HookEntry[],
+        hooks: replaceManaged(group.hooks, managedEntries, marker),
       }
     }
     return item
@@ -72,7 +61,7 @@ export function mergeNestedHookGroups(
     if (flatManagedIndex >= 0) {
       const flat = result[flatManagedIndex] as HookEntry
       result[flatManagedIndex] = {
-        hooks: appendUnique([flat], managedEntries) as HookEntry[],
+        hooks: replaceManaged([flat], managedEntries, marker),
       }
       updated = true
     } else {

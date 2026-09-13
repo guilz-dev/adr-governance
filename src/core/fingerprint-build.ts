@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto'
+import { createHash, type Hash } from 'node:crypto'
+import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -92,22 +93,52 @@ async function hashUntrackedFiles(
   return { hash: sha256(hashes.join('\n')), mode: 'content' }
 }
 
+async function hashGitDiff(repoRoot: string, head: string): Promise<Hash | null> {
+  return new Promise((resolve) => {
+    const hash = createHash('sha256').update(`${head}\n`)
+    const child = spawn('git', ['diff', '--no-ext-diff', '--binary', 'HEAD'], {
+      cwd: repoRoot,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+    child.stdout.on('data', (chunk: Buffer) => hash.update(chunk))
+    child.on('error', () => resolve(null))
+    child.on('close', (code) => resolve(code === 0 ? hash : null))
+  })
+}
+
 async function observeRepositoryState(repoRoot: string): Promise<RepositoryStateObservation | null> {
-  const [status, head, diff] = await Promise.all([
+  const [status, head] = await Promise.all([
     runGit(repoRoot, ['status', '--porcelain=v1', '-z', '--untracked-files=all']),
     runGit(repoRoot, ['rev-parse', 'HEAD']),
-    runGit(repoRoot, ['diff', '--no-ext-diff', '--binary', 'HEAD']),
   ])
-  if (status === null || head === null || diff === null) return null
+  if (status === null || head === null) return null
 
-  const untracked = await hashUntrackedFiles(repoRoot, status)
-  if (untracked === null) return null
+  const [untracked, diffHash] = await Promise.all([
+    hashUntrackedFiles(repoRoot, status),
+    hashGitDiff(repoRoot, head),
+  ])
+  if (untracked === null || diffHash === null) return null
 
   return {
     gitStatusHash: createHash('sha256').update(status).digest('hex'),
-    repositoryStateHash: sha256(`${head}\n${diff}\n${untracked.hash}`),
+    repositoryStateHash: diffHash.update(`\n${untracked.hash}`).digest('hex'),
     collectionMode: untracked.mode,
     degradationReason: untracked.reason,
+  }
+}
+
+/** Runtime audits compare the whole repository and do not need legacy watch hashes. */
+export async function buildAuditRepositoryFingerprint(repoRoot: string): Promise<RepositoryFingerprint> {
+  const observation = await observeRepositoryState(repoRoot)
+  return {
+    paths: [],
+    contentHashes: {},
+    watchGitStatusHash: sha256(''),
+    overflowWatchHash: sha256(''),
+    gitStatusHash: observation?.gitStatusHash ?? sha256(''),
+    repositoryStateHash: observation?.repositoryStateHash,
+    collectionMode: observation?.collectionMode ?? 'unavailable',
+    degradationReason: observation === null ? 'git-unavailable' : observation.degradationReason,
   }
 }
 

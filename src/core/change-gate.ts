@@ -56,6 +56,10 @@ function isExempt(relativePath: string, exemptPaths: string[]): boolean {
   return false
 }
 
+export function nonGovernancePaths(changedPaths: string[], governancePaths: string[], config: AdrConfig): string[] {
+  return changedPaths.filter(p => !isGovernancePath(p, governancePaths) && !isExempt(p, config.changeGate.exemptPaths))
+}
+
 function severityFor(config: AdrConfig, code: string): 'error' | 'warning' {
   if (code === 'decision-evidence-legacy') return 'warning'
   if (config.changeGate.mode === 'warn' && CHANGE_GATE_CODES.has(code)) {
@@ -77,9 +81,7 @@ export function evaluateChangeGate(input: ChangeGateInput): ValidationIssue[] {
   const { config } = input
   if (config.changeGate.mode === 'off') return []
 
-  const nonGovernanceChanges = input.changedPaths.filter(
-    (p) => !isGovernancePath(p, input.governancePaths) && !isExempt(p, config.changeGate.exemptPaths),
-  )
+  const nonGovernanceChanges = nonGovernancePaths(input.changedPaths, input.governancePaths, config)
 
   if (nonGovernanceChanges.length === 0) return []
 

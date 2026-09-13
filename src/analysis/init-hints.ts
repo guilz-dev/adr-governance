@@ -48,6 +48,7 @@ export function ciWorkflowSuggestion(): string {
 name: adr-governance
 on:
   pull_request:
+    types: [opened, edited, synchronize, reopened]
   push:
     branches: [main, develop]
 jobs:
@@ -61,10 +62,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: >-
-          node .adr-governance/bin/cli.mjs check
-          --base "\${{ github.event.pull_request.base.sha }}"
-          --github-event "$GITHUB_EVENT_PATH"
+      - run: |
+          verifier=$(mktemp "$RUNNER_TEMP/adr-governance-check.XXXXXX.mjs")
+          trap 'rm -f "$verifier"' EXIT
+          git show "\${{ github.event.pull_request.base.sha }}:.adr-governance/bin/cli.mjs" > "$verifier"
+          node "$verifier" check --repo "$GITHUB_WORKSPACE" --base "\${{ github.event.pull_request.base.sha }}" --github-event "$GITHUB_EVENT_PATH"
   adr-check-push:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
