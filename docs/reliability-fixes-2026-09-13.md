@@ -8,7 +8,7 @@ The report targeted v0.2.0 at `0b15f05`. Its core H-1–H-4 and M-1–M-8 observ
 | --- | --- |
 | H-1 | `check --base` and `attest` read policy/layout from the immutable base. Head mode, exemption and layout edits cannot weaken that check. Config and executable governance changes require evidence. |
 | H-2 | Only base manifest entries grant generated-artifact exemptions. A new head entry cannot hide an implementation change or stale evidence. |
-| H-3 | Gate classification uses the exact `buildChangeSet` entries. NUL-delimited Git output preserves Unicode, whitespace and both sides of renames. |
+| H-3 | Gate classification uses the exact `buildChangeSet` entries. NUL-delimited Git output preserves Unicode, whitespace and both sides of renames. File-to-directory replacement retains the original deletion; unsupported gitlink changes produce an explicit comparison failure. |
 | H-4 | Evidence is read only when a non-governance change requires it. ADR/CONTEXT-only PRs may omit the evidence block. |
 | H-5 | Generated and self-hosted workflows include `edited`. The defect was missing re-evaluation after body edits; the original assertion that no legitimate sequence could pass was too strong. |
 | M-1 | Hook instructions supply a shell-quoted session ID. Missing or unknown IDs fail with guidance rather than writing an orphan receipt. Legacy pointers remain readable; no latest-other-session fallback is used. |
@@ -19,7 +19,7 @@ The report targeted v0.2.0 at `0b15f05`. Its core H-1–H-4 and M-1–M-8 observ
 | M-6 | Promotion updates status/date/acceptance in place, preserving the body, one H1, supported supersession metadata and unknown frontmatter. |
 | M-7 | Tracked diffs are streamed into the fingerprint hash, so a diff larger than 1 MiB no longer disables change detection. |
 | M-8 | Retained intentionally: v1 evidence emits a legacy warning throughout v0.2.x, as specified by ADR-0002. Rejection remains a v0.3.0 change. |
-| L-1 | Comparison failures follow the trusted warn/enforce policy. Missing or unreadable base policy itself fails closed because its mode cannot be trusted. |
+| L-1 | Comparison failures follow the trusted warn/enforce policy. Missing base refs (including symbolic names) or unreadable base policy fail closed because the trusted mode cannot be determined. |
 | L-2 | Corpus hashing sorts UTF-8 bytes instead of using the process locale. |
 | L-3 | Locks publish a populated owner directory atomically. Cleanup/release remove only the observed owner, so competing cleanup cannot steal a replacement. Recent incomplete legacy lock files are respected. |
 | L-4 | Runtime audits collect the repository fingerprint without unused legacy watch-file hashes. Existing watch helper APIs remain available. |
@@ -42,6 +42,8 @@ The workflow definition, runner configuration and selected base SHA are part of 
 Re-run `attest` after upgrading. Deterministic corpus ordering and corrected rename/EOL handling can change hashes compared with earlier v0.2.0 builds. Keep local and CI Git attribute/clean-filter configuration aligned. Tests exercise EOL and custom clean-filter normalization and mode/symlink checkout behavior; this is not a claim of a complete Windows runtime certification. Existing Git blob-read limits and hook timeout fail-open behavior still apply.
 
 The CLI continues to consume the event payload without network calls. Body edits trigger a new evaluation; rerunning an old job reuses its old event. A valid sequence is to finish changes, attest, update the PR body, and push the corresponding tree.
+
+The current snapshot algorithm does not represent submodules (Git mode `160000`). Changes adding, updating or deleting a gitlink are rejected by `attest`; `check` reports a comparison failure (error in trusted enforce mode, warning in trusted warn mode). They are never silently treated as an empty change set.
 
 ## Regression coverage
 

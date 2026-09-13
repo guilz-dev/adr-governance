@@ -715,7 +715,7 @@ node .adr-governance/bin/cli.mjs check [--base <git-ref>] [--evidence <json-path
 
 `--evidence` はprovider-neutralなJSON file、`--github-event` はGitHub event fileの `pull_request.body` にある単一の fenced `adr-governance` blockを読む。両flagの同時指定はusage errorとし、GitHub APIまたはその他のnetwork callは行わない。
 
-enforce modeではbase ref、証跡、参照ADR、decision corpus、比較処理のいずれかを読めない場合にfail-closedとする。warn modeはchange-gate固有findingと比較取得失敗をwarningへ下げ、従来の構造検証errorはerrorのまま維持する。baseの設定自体が読めない場合はtrusted modeを確定できないため `base-policy-unavailable` errorとする。
+enforce modeではbase ref、証跡、参照ADR、decision corpus、比較処理のいずれかを読めない場合にfail-closedとする。warn modeはchange-gate固有findingと比較取得失敗をwarningへ下げ、従来の構造検証errorはerrorのまま維持する。baseの設定自体が読めない場合はtrusted modeを確定できないため `base-policy-unavailable` errorとする。名前付きbase ref自体が存在しない場合もhead設定を信用せず `base-ref-unavailable` errorとする。
 
 主なvalidation codeは `base-policy-unavailable`、`human-acceptance-required`、`base-ref-unavailable`、`decision-evidence-required`、`decision-evidence-invalid`、`decision-evidence-legacy`、`decision-baseline-stale`、`decision-base-stale`、`decision-changeset-stale`、`decision-ref-not-accepted`、`decision-ref-stale`、`changed-proposal-unreviewed`、`invalid-status-transition`、`accepted-without-acceptance`、`proposed-with-acceptance` とする。
 
@@ -729,6 +729,8 @@ schemaVersion 2 は次のフィールドを持つ。
 - `changeSet.digest`: canonical changesetのSHA-256 digest
 
 `git-change-set-v1` は `git merge-base <baseCommit> HEAD` をcomparison baseとし、immutable base tipとHEADのthree-dot差分、index/worktree status、untracked filesの和集合から変更pathを列挙する。rename heuristicは使わず、旧pathのdeleteと新pathのaddとして表現する。Gateの変更分類にも同じentriesを使用する。current contentはGit clean filterと改行変換を通したblob bytesをSHA-256でhashし、modeはGitのfilemode/symlink設定とindexを尊重する。stateディレクトリとgitignore対象fileは含めない。
+
+ファイルが同名ディレクトリに置換された場合もbase側の削除を保持する。gitlink（mode `160000`）は現行snapshot形式では未対応のため、追加・更新・削除を黙って除外せず比較失敗とする。`attest` は失敗し、`check` はtrusted enforceではerror、trusted warnではwarningを返す。
 
 canonical payloadの1 entryは次のNUL区切り形式とする。
 

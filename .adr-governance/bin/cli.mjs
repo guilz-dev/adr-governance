@@ -519,7 +519,7 @@ __export(git_diff_exports, {
   resolveMergeBase: () => resolveMergeBase
 });
 import { execFile as execFile2 } from "node:child_process";
-import { lstat as lstat3, mkdtemp, rm as rm2 } from "node:fs/promises";
+import { mkdtemp, rm as rm2 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path11 from "node:path";
 import { promisify as promisify2 } from "node:util";
@@ -551,12 +551,6 @@ async function shouldIncludePath(repoRoot, relativePath) {
   const normalized = normalizeRepoPath(relativePath);
   if (!normalized || normalized.startsWith(STATE_PREFIX)) return false;
   if (await isIgnored(repoRoot, normalized)) return false;
-  const abs = path11.join(repoRoot, normalized);
-  try {
-    const info = await lstat3(abs);
-    if (info.isDirectory()) return false;
-  } catch {
-  }
   return true;
 }
 async function resolveCommit(repoRoot, ref) {
@@ -621,7 +615,7 @@ async function readModeAtRef(repoRoot, ref, relativePath) {
     const output = (await git(repoRoot, ["ls-tree", ref, "--", normalized])).trim();
     if (!output) return null;
     const mode = output.split(/\s+/)[0];
-    if (mode === "100644" || mode === "100755" || mode === "120000") return mode;
+    if (mode === "100644" || mode === "100755" || mode === "120000" || mode === "160000") return mode;
     return null;
   } catch {
     return null;
@@ -665,7 +659,7 @@ async function readIndexMode(repoRoot, relativePath) {
   const output = await git(repoRoot, ["ls-files", "--stage", "-z", "--", relativePath]);
   const entry = output.split("\0").find((line) => line.split("	")[0]?.endsWith(" 0"));
   const mode = entry?.split(" ")[0];
-  return mode === "100644" || mode === "100755" || mode === "120000" ? mode : null;
+  return mode === "100644" || mode === "100755" || mode === "120000" || mode === "160000" ? mode : null;
 }
 async function readGitBoolean(repoRoot, key, fallback) {
   try {
@@ -3963,7 +3957,7 @@ function hashDecisionCorpus(entries) {
 init_git_diff();
 init_numbering();
 import { createHash as createHash2 } from "node:crypto";
-import { lstat as lstat4, readFile as readFile9, readlink } from "node:fs/promises";
+import { lstat as lstat3, readFile as readFile9, readlink } from "node:fs/promises";
 import path13 from "node:path";
 function sideParts(side) {
   return side ? [side.mode, side.contentHash] : ["-", "-"];
@@ -3992,10 +3986,12 @@ function hashChangeSetEntries(entries) {
   return `sha256:${sha256(parts.join(""))}`;
 }
 async function readCurrentSide(repoRoot, relativePath) {
+  const indexMode = await readIndexMode(repoRoot, relativePath);
+  if (indexMode === "160000") throw new Error(`unsupported gitlink snapshot: ${relativePath}`);
   const abs = path13.join(repoRoot, relativePath);
   let info;
   try {
-    info = await lstat4(abs);
+    info = await lstat3(abs);
   } catch {
     return null;
   }
@@ -4006,7 +4002,6 @@ async function readCurrentSide(repoRoot, relativePath) {
   if (!info.isFile()) {
     return null;
   }
-  const indexMode = await readIndexMode(repoRoot, relativePath);
   if (indexMode === "120000" && !await readGitBoolean(repoRoot, "core.symlinks", true)) {
     return { mode: "120000", contentHash: hashContent(await readFile9(abs)) };
   }
@@ -4017,6 +4012,7 @@ async function readCurrentSide(repoRoot, relativePath) {
 }
 async function readBaseSide(repoRoot, comparisonBase, relativePath) {
   const mode = await readModeAtRef(repoRoot, comparisonBase, relativePath);
+  if (mode === "160000") throw new Error(`unsupported gitlink snapshot: ${relativePath}`);
   if (!mode) return null;
   const blob = await readBlobAtRef(repoRoot, comparisonBase, relativePath);
   if (blob === null) return null;
@@ -4267,7 +4263,7 @@ async function runCheck(repoRoot, options) {
     }
   }
   if (resolved.baseRef) {
-    const gateIssues = await checkDecisionAuthority(repoRoot, config, resolved);
+    const gateIssues = await checkDecisionAuthority(repoRoot, resolved);
     issues.push(...gateIssues);
   }
   for (const message of await verifyAllRuntimeHookEntries(repoRoot)) {
@@ -4293,11 +4289,11 @@ async function listContextFiles(repoRoot, candidates) {
   }
   return [...new Set(paths)];
 }
-async function checkDecisionAuthority(repoRoot, headConfig, options) {
+async function checkDecisionAuthority(repoRoot, options) {
   if (!options.baseRef) return [];
   if (!await refExists(repoRoot, options.baseRef)) {
     return [{
-      severity: headConfig.changeGate.mode === "enforce" ? "error" : "warning",
+      severity: "error",
       code: "base-ref-unavailable",
       message: `Could not read base ref ${options.baseRef}`
     }];

@@ -6,7 +6,7 @@
     ".agents/skills/managing-adrs/references/adr-format.md": "49b1ae76616afaa60111cf84d0037c05ac3a1b6dec442e1e25fc3c394699d9f8",
     ".agents/skills/managing-adrs/references/context-format.md": "d57c861a44c78a72fbb90525505618227a523d4550c576d401c8be7c3da6b35c",
     ".agents/skills/managing-adrs/references/decision-policy.md": "3c48a1ea7db84ae0118d2ad2e154448e4441ecbf701ada8db75171dd411660fc",
-    ".adr-governance/bin/cli.mjs": "d1b8aa7306f2a49e8b06dc43d2a79cd8638aed23114c141dd60df991090d2d81",
+    ".adr-governance/bin/cli.mjs": "e3e42ac17bcbc412a45c21f919094077afd4da962b49f067cfc5f8ea11790188",
     ".adr-governance/bin/hook-shim-runner.mjs": "afa042c6e2c11438dec8633a228ff1746fafef3bff04165753106f7d12b484b4",
     ".adr-governance/bin/hook.mjs": "4fd4bf7af76b5206f09d12a33dac0b923ff9967eae292ef98d7ef6bf608694fd",
     ".adr-governance/schema/adr-config.schema.json": "e39b38ef5cfbace142c5650c75f28e4f72666f2af5f4bdcd94fd39a95313d5ce",

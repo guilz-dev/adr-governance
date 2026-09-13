@@ -140,7 +140,7 @@ export async function runCheck(
   }
 
   if (resolved.baseRef) {
-    const gateIssues = await checkDecisionAuthority(repoRoot, config, resolved)
+    const gateIssues = await checkDecisionAuthority(repoRoot, resolved)
     issues.push(...gateIssues)
   }
 
@@ -172,13 +172,12 @@ async function listContextFiles(repoRoot: string, candidates: string[]): Promise
 
 async function checkDecisionAuthority(
   repoRoot: string,
-  headConfig: ReturnType<typeof parseConfig>['config'],
   options: CheckOptions,
 ): Promise<ValidationIssue[]> {
   if (!options.baseRef) return []
   if (!(await refExists(repoRoot, options.baseRef))) {
     return [{
-      severity: headConfig.changeGate.mode === 'enforce' ? 'error' : 'warning',
+      severity: 'error',
       code: 'base-ref-unavailable',
       message: `Could not read base ref ${options.baseRef}`,
     }]

@@ -69,6 +69,8 @@ async function readCurrentSide(
   repoRoot: string,
   relativePath: string,
 ): Promise<SnapshotSide> {
+  const indexMode = await readIndexMode(repoRoot, relativePath)
+  if (indexMode === '160000') throw new Error(`unsupported gitlink snapshot: ${relativePath}`)
   const abs = path.join(repoRoot, relativePath)
   let info
   try {
@@ -86,7 +88,6 @@ async function readCurrentSide(
     return null
   }
 
-  const indexMode = await readIndexMode(repoRoot, relativePath)
   // With symlink support disabled Git checks out a link as its plain target text.
   if (indexMode === '120000' && !(await readGitBoolean(repoRoot, 'core.symlinks', true))) {
     return { mode: '120000', contentHash: hashContent(await readFile(abs)) }
@@ -105,6 +106,7 @@ async function readBaseSide(
   relativePath: string,
 ): Promise<SnapshotSide> {
   const mode = await readModeAtRef(repoRoot, comparisonBase, relativePath)
+  if (mode === '160000') throw new Error(`unsupported gitlink snapshot: ${relativePath}`)
   if (!mode) return null
   const blob = await readBlobAtRef(repoRoot, comparisonBase, relativePath)
   if (blob === null) return null

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { lstat, mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -40,13 +40,8 @@ async function shouldIncludePath(repoRoot: string, relativePath: string): Promis
   const normalized = normalizeRepoPath(relativePath)
   if (!normalized || normalized.startsWith(STATE_PREFIX)) return false
   if (await isIgnored(repoRoot, normalized)) return false
-  const abs = path.join(repoRoot, normalized)
-  try {
-    const info = await lstat(abs)
-    if (info.isDirectory()) return false
-  } catch {
-    // Path may exist only in Git history.
-  }
+  // A directory can replace a tracked file or represent a gitlink. Keep the
+  // candidate so the snapshot preserves its base side or rejects its mode.
   return true
 }
 
@@ -126,7 +121,7 @@ export async function readModeAtRef(
   repoRoot: string,
   ref: string,
   relativePath: string,
-): Promise<'100644' | '100755' | '120000' | null> {
+): Promise<'100644' | '100755' | '120000' | '160000' | null> {
   const normalized = normalizeRepoPath(relativePath)
   try {
     const output = (
@@ -134,7 +129,7 @@ export async function readModeAtRef(
     ).trim()
     if (!output) return null
     const mode = output.split(/\s+/)[0]
-    if (mode === '100644' || mode === '100755' || mode === '120000') return mode
+    if (mode === '100644' || mode === '100755' || mode === '120000' || mode === '160000') return mode
     return null
   } catch {
     return null
@@ -174,11 +169,11 @@ export async function readCleanWorktreeBlob(repoRoot: string, relativePath: stri
 export async function readIndexMode(
   repoRoot: string,
   relativePath: string,
-): Promise<'100644' | '100755' | '120000' | null> {
+): Promise<'100644' | '100755' | '120000' | '160000' | null> {
   const output = await git(repoRoot, ['ls-files', '--stage', '-z', '--', relativePath])
   const entry = output.split('\0').find((line) => line.split('\t')[0]?.endsWith(' 0'))
   const mode = entry?.split(' ')[0]
-  return mode === '100644' || mode === '100755' || mode === '120000' ? mode : null
+  return mode === '100644' || mode === '100755' || mode === '120000' || mode === '160000' ? mode : null
 }
 
 export async function readGitBoolean(repoRoot: string, key: string, fallback: boolean): Promise<boolean> {

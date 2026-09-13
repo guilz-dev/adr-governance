@@ -48,6 +48,13 @@ async function attest(f: Awaited<ReturnType<typeof setup>>) {
 }
 
 describe('trusted base policy', () => {
+  it.each(['off', 'warn'] as const)('fails closed for a missing named base even with head mode %s', async mode => {
+    const f = await setup(defaultConfig({ changeGate: { mode, exemptPaths: [] } }))
+    const result = await runCheck(f.repo, { baseRef: 'missing-base' })
+    expect(result.exitCode).toBe(1)
+    expect(result.issues).toContainEqual(expect.objectContaining({ severity: 'error', code: 'base-ref-unavailable' }))
+  })
+
   it('fails closed when the base contains no governance policy, even if head turns it off', async () => {
     const f = await setup()
     git(f.repo, 'rm', 'adr.config.json')
@@ -114,6 +121,33 @@ describe('trusted base policy', () => {
 })
 
 describe('classification and evidence diagnostics', () => {
+  it('retains a file deletion when an exempt directory replaces it', async () => {
+    const f = await setup(defaultConfig({ changeGate: { mode: 'enforce', exemptPaths: ['implementation.js/note.md'] } }), { 'implementation.js': 'implementation\n' })
+    await rm(path.join(f.repo, 'implementation.js'))
+    await put(f.repo, 'implementation.js/note.md', 'note\n')
+    git(f.repo, 'add', '.')
+    gitCommit(f.repo, 'replace implementation with directory')
+    expect((await runCheck(f.repo, { baseRef: f.baseRef })).issues.map(i => i.code)).toContain('decision-evidence-required')
+  })
+
+  it.each(['add', 'update', 'delete'] as const)('explicitly rejects an unsupported gitlink %s under enforce policy', async change => {
+    const f = await setup()
+    git(f.repo, 'update-index', '--add', '--cacheinfo', `160000,${f.baseRef},dependency`)
+    gitCommit(f.repo, 'add gitlink')
+    let baseRef = f.baseRef
+    if (change !== 'add') {
+      baseRef = git(f.repo, 'rev-parse', 'HEAD')
+      if (change === 'delete') git(f.repo, 'update-index', '--force-remove', 'dependency')
+      else git(f.repo, 'update-index', '--cacheinfo', `160000,${baseRef},dependency`)
+      gitCommit(f.repo, `${change} gitlink`)
+    }
+    // Default CI checkout leaves an uninitialized submodule directory.
+    await mkdir(path.join(f.repo, 'dependency'), { recursive: true })
+    const result = await runCheck(f.repo, { baseRef })
+    expect(result.exitCode).toBe(1)
+    expect(result.issues).toContainEqual(expect.objectContaining({ severity: 'error', message: expect.stringContaining('unsupported gitlink snapshot: dependency') }))
+  })
+
   it('checks a deleted source path when its rename destination is exempt', async () => {
     const f = await setup(defaultConfig({ changeGate: { mode: 'enforce', exemptPaths: ['docs/'] } }), { 'src/core.ts': 'export const core = 1\n' })
     await mkdir(path.join(f.repo, 'docs'), { recursive: true })
