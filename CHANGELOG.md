@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Validate ADR-only additions through the CLI evidence gate, including evidence freshness and accepted references.
+- Preserve same-PR proposed-to-accepted transitions with portable promotion records; reject missing, invalid, and stale records and roll back failed promotion writes.
+- Allow the installed `manifest-refresh` command to run without an upstream package directory.
 - Bind gate policy and generated exemptions to the immutable base; run PR checks with its verifier and re-evaluate edited PR bodies.
 - Share canonical rename/path classification with evidence hashing, normalize Git clean-filter bytes and modes, and make corpus ordering and recursive ADR scope deterministic.
 - Preserve user config/settings during sync and ADR bodies/frontmatter during promotion.

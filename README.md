@@ -189,10 +189,26 @@ node .adr-governance/bin/cli.mjs check [--base origin/main]
 node .adr-governance/bin/cli.mjs create --status proposed --title "..." --body-file body.md --approval human
 node .adr-governance/bin/cli.mjs promote ADR-0007 [--approval human]
 node .adr-governance/bin/cli.mjs supersede ADR-0002 --by ADR-0008 --approval human
-node .adr-governance/bin/cli.mjs manifest-refresh --from /path/to/adr-governance
+node .adr-governance/bin/cli.mjs manifest-refresh
 node .adr-governance/bin/cli.mjs sync --from /path/to/adr-governance
 node .adr-governance/bin/cli.mjs turn-close --outcome no-change --reason reversible --session-id '<ID supplied by the hook>'
 ```
+
+`promote` writes `.adr-governance/promotions/ADR-NNNN.json` containing the proposed
+document and approval mode. Commit this record together with the accepted ADR.
+This lets `check --base` verify a creation and promotion within one PR, including
+after a squash or clean checkout. A new accepted ADR without a matching record
+is rejected. The proposed and accepted bodies must match; supersession metadata
+can still be added by `supersede`. Edit the proposal before promoting it.
+
+The record is reviewable lifecycle evidence, not proof of the human's identity:
+like `--approval human`, it remains an honor system. It contains ADR text only,
+not conversation transcripts. Existing ADRs present at the comparison base do
+not need retroactive records.
+
+New ADR files also require fresh decision evidence, even in ADR-only PRs.
+`manifest-refresh` updates installed file hashes without a source package or
+`--from`; it does not synchronize or verify those files against upstream.
 
 ## Principles
 

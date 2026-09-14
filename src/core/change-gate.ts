@@ -96,38 +96,22 @@ function reviewedProposalIssues(input: ChangeGateInput, evidence: DecisionEviden
   return issues
 }
 
-function newAdrAuthoringIssues(input: ChangeGateInput): ValidationIssue[] {
-  if (input.changedNewAdrFiles.length === 0) return []
-
-  if (!input.evidence || input.evidence.outcome.kind === 'no-adr') {
-    return [
-      issue(
-        input.config,
-        'decision-evidence-required',
-        'New ADR files require decision evidence; no-adr attestations cannot authorize ADR authoring',
-      ),
-    ]
-  }
-
-  return reviewedProposalIssues(input, input.evidence)
-}
-
 export function evaluateChangeGate(input: ChangeGateInput): ValidationIssue[] {
   const { config } = input
   if (config.changeGate.mode === 'off') return []
 
-  const issues: ValidationIssue[] = [...newAdrAuthoringIssues(input)]
-
+  const issues: ValidationIssue[] = []
+  const hasNewAdrs = input.changedNewAdrFiles.length > 0
   const nonGovernanceChanges = nonGovernancePaths(input.changedPaths, input.governancePaths, config)
 
-  if (nonGovernanceChanges.length === 0) return issues
+  if (!hasNewAdrs && nonGovernanceChanges.length === 0) return issues
 
   if (!input.evidence) {
     issues.push(
       issue(
         config,
         'decision-evidence-required',
-        'Non-governance changes require decision evidence',
+        hasNewAdrs ? 'New ADR files require decision evidence' : 'Non-governance changes require decision evidence',
       ),
     )
     return issues
@@ -145,6 +129,10 @@ export function evaluateChangeGate(input: ChangeGateInput): ValidationIssue[] {
       ),
     )
     return issues
+  }
+
+  if (hasNewAdrs && evidence.outcome.kind === 'no-adr') {
+    issues.push(issue(config, 'decision-evidence-required', 'New ADR files require decision evidence; no-adr attestations cannot authorize ADR authoring'))
   }
 
   if (isDecisionEvidenceV1(evidence)) {
