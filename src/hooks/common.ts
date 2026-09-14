@@ -10,7 +10,7 @@ export type HookContext = {
 }
 
 export function buildStandingReminder(): string {
-  return 'ADR governance is active. Record architectural decisions in ADR/CONTEXT when the three criteria apply.'
+  return 'ADR governance is active. Consult existing ADRs and CONTEXT when design decisions arise. Do not create or edit ADR/CONTEXT without explicit user instruction; you may ask the user before writing.'
 }
 
 function receiptInstruction(sessionId: string): string {
@@ -31,7 +31,7 @@ export function buildFullInstruction(config: AdrConfig, relevantAdrPaths: string
     'ADR governance: possible or likely architectural impact detected.',
     'Read `.agents/skills/managing-adrs/SKILL.md` completely and follow it.',
     '',
-    'Three criteria (all required for a new ADR):',
+    'Three criteria (human judgment basis for whether a new ADR may be warranted — not an automatic trigger to create one):',
     '1. Hard to reverse',
     '2. Surprising without context',
     '3. Real trade-off',
@@ -43,7 +43,9 @@ export function buildFullInstruction(config: AdrConfig, relevantAdrPaths: string
     'Relevant ADRs:',
     paths,
     '',
-    'Before finishing, update ADR/CONTEXT or explicitly record a no-ADR reason via turn-close when no ADR is required.',
+    'Even when all three criteria match, confirm with the user before writing ADR/CONTEXT.',
+    'For PR evidence when no new ADR is needed, use attest --no-adr; do not add a new ADR solely to satisfy CI.',
+    'turn-close records a no-ADR receipt when no new ADR is required; it is not a substitute for ADR authoring.',
     'The after-turn hook may request one audit follow-up but never records a no-ADR reason on your behalf.',
     ...(sessionId ? ['', receiptInstruction(sessionId)] : []),
   ].join('\n')
@@ -85,7 +87,7 @@ export type AfterTurnDecision = {
 }
 
 export const AUDIT_FOLLOWUP_MESSAGE =
-  'ADR audit: this turn may have architectural impact but no ADR/CONTEXT update or no-ADR reason was recorded. Read `.agents/skills/managing-adrs/SKILL.md` and either document the decision or record a reason code.'
+  'ADR audit: this turn may have architectural impact but no ADR/CONTEXT update or no-ADR reason was recorded. Read `.agents/skills/managing-adrs/SKILL.md`, confirm compliance with existing ADRs or record a no-ADR reason via turn-close. Do not author ADR/CONTEXT without explicit user intent.'
 
 export function isAuditFollowUpPrompt(prompt: string): boolean {
   const trimmed = prompt.trim()

@@ -221,6 +221,10 @@ async function checkDecisionAuthority(
 
     const corpus = await buildRefDecisionCorpus(repoRoot, baseRef, config)
     const changed = new Set(changedPaths)
+    const baseAdrPaths = new Set(baseAdrs.map((adr) => adr.path))
+    const changedNewAdrFiles = headAdrs
+      .filter((adr) => changed.has(adr.path) && !baseAdrPaths.has(adr.path))
+      .map((adr) => adr.path)
     const changedProposed = headAdrs.filter(adr => adr.frontmatter.status === 'proposed' && changed.has(adr.path))
     const adrContentHashes = new Map<string, string>()
     for (const adr of headAdrs) {
@@ -232,6 +236,7 @@ async function checkDecisionAuthority(
       config,
       changedPaths,
       governancePaths: govPaths,
+      changedNewAdrFiles,
       changedProposedAdrs: changedProposed,
       adrContentHashes,
       expectedDecisionCorpusHash: hashDecisionCorpus(corpus),

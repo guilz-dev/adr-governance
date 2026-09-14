@@ -19,9 +19,11 @@ Accepted:
 ---
 status: accepted
 date: YYYY-MM-DD
-acceptance: automatic
+acceptance: human
 ---
 ```
+
+Use `acceptance: human` when promoted or created with `--approval human`. Do not add accepted ADR files directly — use proposed + promote.
 
 Superseded:
 
@@ -48,3 +50,13 @@ Optional sections (only when valuable):
 - `## Open Points` (proposed only)
 
 Do not fill template sections with placeholder text.
+
+## CLI authoring
+
+All ADR authoring commands require explicit human intent:
+
+```bash
+node .adr-governance/bin/cli.mjs create --status proposed --title "..." --body-file body.md --approval human
+node .adr-governance/bin/cli.mjs promote ADR-0007 --approval human
+node .adr-governance/bin/cli.mjs supersede ADR-0002 --by ADR-0008 --approval human
+```

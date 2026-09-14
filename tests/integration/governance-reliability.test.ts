@@ -207,12 +207,14 @@ describe('ADR scope and metadata', () => {
     expect((await runCheck(f.repo, { baseRef: f.baseRef })).issues).toEqual([])
   })
 
-  it('requires human metadata for a new accepted ADR under trusted human policy', async () => {
+  it('blocks direct accepted ADR adds even with human metadata under trusted human policy', async () => {
     const f = await setup(defaultConfig({ promotion: { requireHumanAcceptance: true } }))
     await put(f.repo, 'docs/adr/0001-self.md', adr('accepted', 'automatic'))
-    expect((await runCheck(f.repo, { baseRef: f.baseRef })).issues.map(i => i.code)).toContain('human-acceptance-required')
+    const automaticCodes = (await runCheck(f.repo, { baseRef: f.baseRef })).issues.map(i => i.code)
+    expect(automaticCodes).toContain('human-acceptance-required')
+    expect(automaticCodes).toContain('direct-accepted-add')
     await put(f.repo, 'docs/adr/0001-self.md', adr('accepted', 'human'))
-    expect((await runCheck(f.repo, { baseRef: f.baseRef })).issues).toEqual([])
+    expect((await runCheck(f.repo, { baseRef: f.baseRef })).issues.map(i => i.code)).toContain('direct-accepted-add')
   })
 
   it('uses byte ordering for the decision corpus payload', () => {

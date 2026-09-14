@@ -17,7 +17,14 @@ export async function runCreate(options: {
   status: AdrStatus
   title: string
   body: string
+  approval?: 'automatic' | 'human'
 }): Promise<string> {
+  if (options.approval !== 'human') {
+    throw new Error(
+      'ADR create requires explicit human intent: pass --approval human (AI agents must not create ADRs without user instruction).',
+    )
+  }
+
   const release = await acquireLock(options.repoRoot, 'create', 'create')
   try {
     const acceptedDir = path.join(options.repoRoot, options.config.layout.acceptedDir)

@@ -10,6 +10,7 @@ export type ChangeGateInput = {
   config: AdrConfig
   changedPaths: string[]
   governancePaths: string[]
+  changedNewAdrFiles: string[]
   changedProposedAdrs: ParsedAdr[]
   adrContentHashes: Map<string, string>
   expectedDecisionCorpusHash: string
@@ -77,38 +78,74 @@ function issue(
   return { severity: severityFor(config, code), code, message, path }
 }
 
+function reviewedProposalIssues(input: ChangeGateInput, evidence: DecisionEvidence): ValidationIssue[] {
+  const reviewed = new Set(evidence.reviewedProposals.map((p) => p.id))
+  const issues: ValidationIssue[] = []
+  for (const proposed of input.changedProposedAdrs) {
+    if (!reviewed.has(proposed.id)) {
+      issues.push(
+        issue(
+          input.config,
+          'changed-proposal-unreviewed',
+          `Changed proposed ADR requires reviewedProposals declaration: ${proposed.id}`,
+          proposed.path,
+        ),
+      )
+    }
+  }
+  return issues
+}
+
+function newAdrAuthoringIssues(input: ChangeGateInput): ValidationIssue[] {
+  if (input.changedNewAdrFiles.length === 0) return []
+
+  if (!input.evidence || input.evidence.outcome.kind === 'no-adr') {
+    return [
+      issue(
+        input.config,
+        'decision-evidence-required',
+        'New ADR files require decision evidence; no-adr attestations cannot authorize ADR authoring',
+      ),
+    ]
+  }
+
+  return reviewedProposalIssues(input, input.evidence)
+}
+
 export function evaluateChangeGate(input: ChangeGateInput): ValidationIssue[] {
   const { config } = input
   if (config.changeGate.mode === 'off') return []
 
+  const issues: ValidationIssue[] = [...newAdrAuthoringIssues(input)]
+
   const nonGovernanceChanges = nonGovernancePaths(input.changedPaths, input.governancePaths, config)
 
-  if (nonGovernanceChanges.length === 0) return []
+  if (nonGovernanceChanges.length === 0) return issues
 
   if (!input.evidence) {
-    return [
+    issues.push(
       issue(
         config,
         'decision-evidence-required',
         'Non-governance changes require decision evidence',
       ),
-    ]
+    )
+    return issues
   }
 
   let evidence: DecisionEvidence
   try {
     evidence = parseDecisionEvidence(input.evidence)
   } catch (e) {
-    return [
+    issues.push(
       issue(
         config,
         'decision-evidence-invalid',
         `Decision evidence failed schema validation: ${String(e)}`,
       ),
-    ]
+    )
+    return issues
   }
-
-  const issues: ValidationIssue[] = []
 
   if (isDecisionEvidenceV1(evidence)) {
     issues.push(
@@ -171,19 +208,7 @@ export function evaluateChangeGate(input: ChangeGateInput): ValidationIssue[] {
     }
   }
 
-  const reviewed = new Set(evidence.reviewedProposals.map((p) => p.id))
-  for (const proposed of input.changedProposedAdrs) {
-    if (!reviewed.has(proposed.id)) {
-      issues.push(
-        issue(
-          config,
-          'changed-proposal-unreviewed',
-          `Changed proposed ADR requires reviewedProposals declaration: ${proposed.id}`,
-          proposed.path,
-        ),
-      )
-    }
-  }
+  issues.push(...reviewedProposalIssues(input, evidence))
 
   return issues
 }

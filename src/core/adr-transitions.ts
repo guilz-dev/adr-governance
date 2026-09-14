@@ -69,7 +69,17 @@ export function validateAdrTransitions(
 
     issues.push(...validateAuthorityMetadata(headAdr, isNewOrChanged, requireHumanAcceptance))
 
-    if (!baseAdr) continue
+    if (!baseAdr) {
+      if (headAdr.frontmatter.status === 'accepted') {
+        issues.push({
+          severity: 'error',
+          code: 'direct-accepted-add',
+          message: 'New accepted ADR must enter via proposed + promote, not direct file add',
+          path: headAdr.path,
+        })
+      }
+      continue
+    }
 
     const from = baseAdr.frontmatter.status
     const to = headAdr.frontmatter.status

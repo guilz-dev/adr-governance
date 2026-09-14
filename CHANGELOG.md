@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `manifest-refresh` CLI command rebuilds `.adr-governance/manifest.json` from installed generated files.
+- ADR-0003: human intent required for ADR authoring.
+
+### Changed
+
+- **Breaking:** `create` and `supersede` require `--approval human`.
+- Three criteria are a human judgment basis for record candidates, not an automatic create trigger.
+- `check --base` blocks new ADR files without proper evidence and rejects direct accepted ADR adds.
+
 ### Fixed
 
 - Bind gate policy and generated exemptions to the immutable base; run PR checks with its verifier and re-evaluate edited PR bodies.
