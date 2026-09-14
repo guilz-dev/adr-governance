@@ -54,6 +54,7 @@ export function validateAdrTransitions(
   base: ParsedAdr[],
   head: ParsedAdr[],
   requireHumanAcceptance = false,
+  promotedIds: ReadonlySet<string> = new Set(),
 ): ValidationIssue[] {
   const baseById = byId(base)
   const issues: ValidationIssue[] = []
@@ -70,11 +71,11 @@ export function validateAdrTransitions(
     issues.push(...validateAuthorityMetadata(headAdr, isNewOrChanged, requireHumanAcceptance))
 
     if (!baseAdr) {
-      if (headAdr.frontmatter.status === 'accepted') {
+      if (headAdr.frontmatter.status === 'accepted' && !promotedIds.has(headAdr.id)) {
         issues.push({
           severity: 'error',
           code: 'direct-accepted-add',
-          message: 'New accepted ADR must enter via proposed + promote, not direct file add',
+          message: 'New accepted ADR requires a matching promotion record from proposed + promote; commit .adr-governance/promotions/ with the ADR',
           path: headAdr.path,
         })
       }

@@ -25,6 +25,7 @@ import { readFileAtRef, refExists, resolveCommit } from '../git-diff.js'
 import { parseGitHubEventEvidence } from '../github-evidence.js'
 import { readBasePolicy } from '../../core/base-policy.js'
 import { isUserManagedFile } from '../../installer/generated-files.js'
+import { hasValidPromotionRecord } from '../../core/promotion-records.js'
 
 export type CheckOptions = {
   baseRef?: string
@@ -199,13 +200,25 @@ async function checkDecisionAuthority(
     const headAdrs = await loadAllAdrs(repoRoot, config)
     issues.push(...checkBaseRefDuplicates(baseAdrs, headAdrs, baseRef))
     if (config.changeGate.mode === 'off') return issues
-    issues.push(...validateAdrTransitions(baseAdrs, headAdrs, config.promotion.requireHumanAcceptance))
+    const baseIds = new Set(baseAdrs.map(adr => adr.id))
+    const promotedIds = new Set<string>()
+    for (const adr of headAdrs) {
+      if (!baseIds.has(adr.id) && adr.frontmatter.status === 'accepted' && await hasValidPromotionRecord(repoRoot, adr, config)) {
+        promotedIds.add(adr.id)
+      }
+    }
+    issues.push(...validateAdrTransitions(baseAdrs, headAdrs, config.promotion.requireHumanAcceptance, promotedIds))
 
     // Build one snapshot for both classification and evidence freshness.
     const changeSet = await buildChangeSet(repoRoot, baseRef)
     const changedPaths = changeSet.entries.map(entry => entry.path)
     const govPaths = await governanceArtifactPaths(repoRoot, baseRef, config, headAdrs, baseAdrs)
-    if (nonGovernancePaths(changedPaths, govPaths, config).length === 0) return issues
+    const changed = new Set(changedPaths)
+    const baseAdrPaths = new Set(baseAdrs.map(adr => adr.path))
+    const changedNewAdrFiles = headAdrs
+      .filter(adr => changed.has(adr.path) && !baseAdrPaths.has(adr.path))
+      .map(adr => adr.path)
+    if (changedNewAdrFiles.length === 0 && nonGovernancePaths(changedPaths, govPaths, config).length === 0) return issues
 
     let evidence = null
     try {
@@ -220,11 +233,6 @@ async function checkDecisionAuthority(
     }
 
     const corpus = await buildRefDecisionCorpus(repoRoot, baseRef, config)
-    const changed = new Set(changedPaths)
-    const baseAdrPaths = new Set(baseAdrs.map((adr) => adr.path))
-    const changedNewAdrFiles = headAdrs
-      .filter((adr) => changed.has(adr.path) && !baseAdrPaths.has(adr.path))
-      .map((adr) => adr.path)
     const changedProposed = headAdrs.filter(adr => adr.frontmatter.status === 'proposed' && changed.has(adr.path))
     const adrContentHashes = new Map<string, string>()
     for (const adr of headAdrs) {

@@ -30,7 +30,7 @@ function usage(): void {
   adr-governance create --status proposed|accepted --title "<title>" --body-file <path> --approval human [--repo <path>]
   adr-governance promote ADR-NNNN [--approval automatic|human] [--repo <path>]
   adr-governance supersede ADR-NNNN --by ADR-MMMM --approval human [--repo <path>]
-  adr-governance manifest-refresh [--from <package-root>] [--repo <path>]
+  adr-governance manifest-refresh [--repo <path>]
   adr-governance turn-close --outcome docs-updated|no-change [--reason <code>] [--session-id <id>] [--repo <path>]`)
 }
 
@@ -250,8 +250,7 @@ async function main(): Promise<void> {
       break
     }
     case 'manifest-refresh': {
-      const packageRoot = resolvePackageRoot(PACKAGE_ROOT, getArg('--from'))
-      const manifestPath = await runManifestRefresh({ repoRoot, packageRoot })
+      const manifestPath = await runManifestRefresh({ repoRoot })
       console.log(`Manifest refreshed: ${manifestPath}`)
       break
     }
