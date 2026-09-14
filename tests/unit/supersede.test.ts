@@ -60,6 +60,7 @@ describe('runSupersede', () => {
         config: defaultConfig(),
         oldAdrId: 'ADR-0001',
         newAdrId: 'ADR-0002',
+        approval: 'human',
       })
 
       const old = parseFrontmatter(await readFile(fixture.oldPath, 'utf8')).frontmatter
@@ -112,6 +113,7 @@ describe('runSupersede', () => {
         config: defaultConfig(),
         oldAdrId: 'ADR-0001',
         newAdrId: 'ADR-0002',
+        approval: 'human',
       })
 
       await expect(readFile(fixture.oldPath, 'utf8')).resolves.toContain(
@@ -137,6 +139,7 @@ describe('runSupersede', () => {
           config: defaultConfig(),
           oldAdrId: 'ADR-0001',
           newAdrId: 'ADR-0002',
+          approval: 'human',
         }),
       ).rejects.toThrow('Supersession validation failed')
 

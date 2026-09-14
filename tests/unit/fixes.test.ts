@@ -130,6 +130,7 @@ describe('create human acceptance guard', () => {
         status: 'accepted',
         title: 'Test',
         body: '# Test\n\nBody',
+        approval: 'human',
       }),
     ).rejects.toThrow(/requireHumanAcceptance/)
   })

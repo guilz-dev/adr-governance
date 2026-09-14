@@ -28,6 +28,7 @@ describe('change-gate', () => {
     config,
     changedPaths: ['src/index.ts'],
     governancePaths: ['docs/adr'],
+    changedNewAdrFiles: [],
     changedProposedAdrs: [],
     adrContentHashes: new Map(),
     expectedDecisionCorpusHash: corpusHash,
@@ -36,11 +37,12 @@ describe('change-gate', () => {
     evidence: v2Evidence,
   }
 
-  it('passes a concrete ADR artifact without evidence', () => {
+  it('passes an edited ADR artifact without evidence when no new ADR files are added', () => {
     const issues = evaluateChangeGate({
       config,
       changedPaths: ['docs/adr/0001-foo.md'],
       governancePaths: ['docs/adr/0001-foo.md', 'CONTEXT.md'],
+      changedNewAdrFiles: [],
       changedProposedAdrs: [],
       adrContentHashes: new Map(),
       expectedDecisionCorpusHash: corpusHash,
@@ -57,6 +59,38 @@ describe('change-gate', () => {
       changedPaths: ['docs/adr/implementation.ts'],
       governancePaths: ['docs/adr/0001-foo.md', 'CONTEXT.md'],
       evidence: null,
+    })
+    expect(issues.some((i) => i.code === 'decision-evidence-required')).toBe(true)
+  })
+
+  it('requires evidence for new ADR files even when the PR is ADR-only', () => {
+    const issues = evaluateChangeGate({
+      config,
+      changedPaths: ['docs/proposed-adr/0007-new-decision.md'],
+      governancePaths: ['docs/proposed-adr/0007-new-decision.md', 'CONTEXT.md'],
+      changedNewAdrFiles: ['docs/proposed-adr/0007-new-decision.md'],
+      changedProposedAdrs: [],
+      adrContentHashes: new Map(),
+      expectedDecisionCorpusHash: corpusHash,
+      resolvedBaseCommit: baseCommit,
+      currentChangeSetDigest: digest,
+      evidence: null,
+    })
+    expect(issues.some((i) => i.code === 'decision-evidence-required')).toBe(true)
+  })
+
+  it('rejects no-adr evidence for new ADR files', () => {
+    const issues = evaluateChangeGate({
+      config,
+      changedPaths: ['docs/proposed-adr/0007-new-decision.md'],
+      governancePaths: ['docs/proposed-adr/0007-new-decision.md', 'CONTEXT.md'],
+      changedNewAdrFiles: ['docs/proposed-adr/0007-new-decision.md'],
+      changedProposedAdrs: [],
+      adrContentHashes: new Map(),
+      expectedDecisionCorpusHash: corpusHash,
+      resolvedBaseCommit: baseCommit,
+      currentChangeSetDigest: digest,
+      evidence: v2Evidence,
     })
     expect(issues.some((i) => i.code === 'decision-evidence-required')).toBe(true)
   })

@@ -8,6 +8,7 @@ import { runAttest } from './commands/attest.js'
 import { runCreate } from './commands/create.js'
 import { runPromote } from './commands/promote.js'
 import { runSupersede } from './commands/supersede.js'
+import { runManifestRefresh } from './commands/manifest-refresh.js'
 import { runTurnClose } from './commands/turn-close.js'
 import { runSync } from './commands/sync.js'
 import { gitRoot } from './git.js'
@@ -26,9 +27,10 @@ function usage(): void {
   adr-governance check [--base <git-ref>] [--evidence <json-path>] [--github-event <event-path>] [--json] [--repo <path>]
   adr-governance attest --base <git-ref> (--adr ADR-NNNN ... | --no-adr <reason> --rationale <text>) [--reviewed-proposal ADR-NNNN ...] [--format json|github-markdown] [--repo <path>]
   adr-governance sync [--from <package-root>] [--repo <path>]
-  adr-governance create --status proposed|accepted --title "<title>" --body-file <path> [--repo <path>]
+  adr-governance create --status proposed|accepted --title "<title>" --body-file <path> --approval human [--repo <path>]
   adr-governance promote ADR-NNNN [--approval automatic|human] [--repo <path>]
-  adr-governance supersede ADR-NNNN --by ADR-MMMM [--repo <path>]
+  adr-governance supersede ADR-NNNN --by ADR-MMMM --approval human [--repo <path>]
+  adr-governance manifest-refresh [--from <package-root>] [--repo <path>]
   adr-governance turn-close --outcome docs-updated|no-change [--reason <code>] [--session-id <id>] [--repo <path>]`)
 }
 
@@ -179,7 +181,14 @@ async function main(): Promise<void> {
         JSON.parse(await readFile(path.join(repoRoot, 'adr.config.json'), 'utf8')),
       ).config
       const body = await readFile(path.resolve(bodyFile), 'utf8')
-      const rel = await runCreate({ repoRoot, config, status, title, body })
+      const rel = await runCreate({
+        repoRoot,
+        config,
+        status,
+        title,
+        body,
+        approval: getArg('--approval') as 'automatic' | 'human' | undefined,
+      })
       console.log(`Created ${rel}`)
       break
     }
@@ -205,7 +214,13 @@ async function main(): Promise<void> {
       const config = parseConfig(
         JSON.parse(await readFile(path.join(repoRoot, 'adr.config.json'), 'utf8')),
       ).config
-      await runSupersede({ repoRoot, config, oldAdrId: oldId, newAdrId: newId })
+      await runSupersede({
+        repoRoot,
+        config,
+        oldAdrId: oldId,
+        newAdrId: newId,
+        approval: getArg('--approval') as 'automatic' | 'human' | undefined,
+      })
       console.log(`Superseded ${oldId} with ${newId}`)
       break
     }
@@ -232,6 +247,12 @@ async function main(): Promise<void> {
         const { serializeDecisionEvidence } = await import('../core/decision-evidence.js')
         console.log(serializeDecisionEvidence(evidence))
       }
+      break
+    }
+    case 'manifest-refresh': {
+      const packageRoot = resolvePackageRoot(PACKAGE_ROOT, getArg('--from'))
+      const manifestPath = await runManifestRefresh({ repoRoot, packageRoot })
+      console.log(`Manifest refreshed: ${manifestPath}`)
       break
     }
     case 'turn-close': {

@@ -33,7 +33,7 @@ The GitHub repository is currently **private**. Source access requires organizat
 | **CLI** (`.adr-governance/bin/cli.mjs`) | Create, validate, sync |
 | **Hook** (`.adr-governance/bin/hook.mjs`) | Per-turn audit |
 
-It also avoids ADR sprawl: new ADRs require all **three criteria** (see [Principles](#principles) below).
+It also avoids ADR sprawl: the **three criteria** identify record candidates, but **explicit human intent** is required before authoring (see [Principles](#principles) below).
 
 ### Architecture
 
@@ -90,11 +90,14 @@ Each runtime's before hook (e.g. Cursor `beforeSubmitPrompt`, Claude Code `UserP
 
 #### During agent work
 
-- When `risk` is `possible` or `likely`, follow the `managing-adrs` Skill to decide whether ADR/CONTEXT needs updating
-- Create a new ADR only when **all three criteria** hold:
+- When `risk` is `possible` or `likely`, follow the `managing-adrs` Skill to evaluate whether a new ADR may be warranted
+- The **three criteria** are a human judgment basis — not an automatic create trigger. Confirm with the user before authoring:
   1. **Hard to reverse** — meaningful cost to change later
   2. **Surprising without context** — a future reader might undo deliberate design without knowing why
   3. **Real trade-off** — viable alternatives existed; one was chosen for explicit reasons
+
+Do not create ADR/CONTEXT without explicit user instruction. For PR evidence when no new ADR is needed, use `attest --no-adr`.
+
 
 #### after-turn (when the turn ends)
 
@@ -183,16 +186,17 @@ pnpm test
 
 ```bash
 node .adr-governance/bin/cli.mjs check [--base origin/main]
-node .adr-governance/bin/cli.mjs create --status proposed --title "..." --body-file body.md
+node .adr-governance/bin/cli.mjs create --status proposed --title "..." --body-file body.md --approval human
 node .adr-governance/bin/cli.mjs promote ADR-0007 [--approval human]
-node .adr-governance/bin/cli.mjs supersede ADR-0002 --by ADR-0008
+node .adr-governance/bin/cli.mjs supersede ADR-0002 --by ADR-0008 --approval human
+node .adr-governance/bin/cli.mjs manifest-refresh --from /path/to/adr-governance
 node .adr-governance/bin/cli.mjs sync --from /path/to/adr-governance
 node .adr-governance/bin/cli.mjs turn-close --outcome no-change --reason reversible --session-id '<ID supplied by the hook>'
 ```
 
 ## Principles
 
-1. **Three criteria** for new ADRs: hard to reverse, surprising without context, real trade-off.
+1. **Three criteria** identify ADR record candidates; **explicit human intent** is required before authoring.
 2. **ADR** = what & why; **CONTEXT** = domain language.
 3. **Split layout** by default: `docs/adr/` + `docs/proposed-adr/`.
 4. Hooks **fail-open**; `check` **fail-closed** for CI.

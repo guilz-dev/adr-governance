@@ -13,7 +13,14 @@ export async function runSupersede(options: {
   config: AdrConfig
   oldAdrId: string
   newAdrId: string
+  approval?: 'automatic' | 'human'
 }): Promise<void> {
+  if (options.approval !== 'human') {
+    throw new Error(
+      'ADR supersede requires explicit human intent: pass --approval human (AI agents must not supersede ADRs without user instruction).',
+    )
+  }
+
   const release = await acquireLock(options.repoRoot, 'supersede', 'supersede')
   try {
     const oldNum = /ADR-(\d+)/.exec(options.oldAdrId)?.[1]
